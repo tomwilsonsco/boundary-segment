@@ -22,3 +22,15 @@ Progress bar takes a while to move from 0 as only moves once whole batch complet
 python utils/chip_image.py --vrt "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/
 downscaled_025/apgb_imgs.vrt"
 ```
+
+5. ## Create masks from land parcel lines
+This will create an equivalent binary mask tif (1 for lines 0 for background) for each input image.
+```bash
+python unet/create_masks.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips" --shapefile inputs/gretna_parcels.gpkg
+```
+6. ## Split the chip images and masks into train, validation, test sets
+The process using `rschip.DatasetSplitter()` will check for and not copy image-mask pairs that are all background (0 class only).
+
+```bash
+python unet/split_dataset_train_test.py --image-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips" --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips/masks" --output-dir inputs/images/gretna
+```
