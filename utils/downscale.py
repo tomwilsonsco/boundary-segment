@@ -41,10 +41,14 @@ def parse_arguments(args=None):
         description="Assign CRS to images and convert to TIFF."
     )
     parser.add_argument(
-        "--img-dir", type=Path, help="Path to the folder containing geotiffs"
+        "--img-dir",
+        type=Path,
+        required=True,
+        help="Path to the folder containing geotiffs",
     )
     parser.add_argument(
         "--output-subdir",
+        type=str,
         help="Name of the output subfolder to write downscaled images",
     )
     parser.add_argument(
