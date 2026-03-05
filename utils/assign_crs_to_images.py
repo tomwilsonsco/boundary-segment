@@ -35,10 +35,14 @@ def parse_arguments(args=None):
         description="Assign CRS to images and convert to TIFF."
     )
     parser.add_argument(
-        "--img-dir", type=Path, help="Path to the folder containing images"
+        "--img-dir",
+        type=Path,
+        required=True,
+        help="Path to the folder containing images",
     )
     parser.add_argument(
         "--output-subdir",
+        type=str,
         default="tiff_with_crs",
         help="Name of the output subfolder (default: tiff_with_crs)",
     )
