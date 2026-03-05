@@ -6,9 +6,6 @@ from tqdm import tqdm
 import argparse
 from functools import partial
 
-# Get the path to the current script's directory
-script_dir = Path(__file__).parent.parent.resolve()
-
 
 def process_func(file_path, out_dir, scale_factor):
     output_file = out_dir / f"{file_path.stem}_ds.tif"
