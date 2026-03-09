@@ -104,8 +104,19 @@ python unet/evaluate.py --dataset-dir inputs/images/gretna/dataset --model model
  **Note:**: Although given above, we do not necessarily need to specify the model .pth file as by default it will take the most recent based on date time saved in the .pth file name. The `--model` argument is needed if not testing the most recently available.
 
 9. ## Predict with model
-Once a trained model is achieving test set prediction performance you are happy with, you can predict for all chipped images across a continuous extent and produce a geopackage output of the boundary line predictions.
+Once a trained model is achieving test set prediction performance you are happy with, you can predict for all chipped images across a continuous extent and produce a geopackage output of the boundary line predictions.2
+
+This process takes a while to complete on large extents.
 
 ```bash
 python unet/predict.py --input-dir inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips
 ```
+
+10. ## Plot some prediction examples
+We can create plots as shown below for predictions on the test set of chips. Vary the number of samples and seed values to get different number and selection of plots.
+
+```bash
+python unet/example_plots.py --dataset-dir inputs/images/gretna/dataset --num-samples 5 --seed 999
+```
+
+![Example test set prediction](plots/apgb_imgs_8832_40320_analysis.png)
