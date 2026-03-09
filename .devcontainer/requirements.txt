@@ -2,7 +2,7 @@ numpy
 pandas
 rasterio
 geopandas
-shapelpiy
+shapelpy
 black
 flake8
 pytest
