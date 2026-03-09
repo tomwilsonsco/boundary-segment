@@ -439,10 +439,18 @@ def main(args):
                 "epochs_no_improve": epochs_no_improve,
                 "train_losses": train_losses,
                 "val_losses": val_losses,
+                "arch": args.arch,
+                "encoder": args.encoder,
             }
             torch.save(checkpoint, checkpoint_path)
-            # save just the model weights for inference
-            torch.save(model.state_dict(), model_save_path)
+            # save model weights and config for inference
+            inference_config = {
+                "state_dict": model.state_dict(),
+                "arch": args.arch,
+                "encoder": args.encoder,
+                "encoder_weights": args.weights,
+            }
+            torch.save(inference_config, model_save_path)
         else:
             epochs_no_improve += 1
             print(f"No improvement for {epochs_no_improve} epoch(s)")
