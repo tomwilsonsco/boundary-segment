@@ -1,0 +1,17 @@
+numpy
+pandas
+rasterio
+geopandas
+shapelpiy
+black
+flake8
+pytest
+matplotlib
+opencv-python-headless
+ipykernel
+scikit-learn
+tqdm
+rschip
+segmentation-models-pytorch
+albumentations
+scikit-image

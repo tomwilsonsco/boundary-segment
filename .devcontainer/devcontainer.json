@@ -1,0 +1,34 @@
+{
+    "name": "boundarylines",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "terminal.integrated.shell.linux": "/bin/bash"
+            },
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "ms-toolsai.jupyter",
+                "ms-python.black-formatter"
+            ]
+        }
+    },
+    "remoteUser": "root",
+    "forwardPorts": [8050],
+    "workspaceFolder": "/app",
+    "mounts": [
+        "source=${localWorkspaceFolder}/,target=/app,type=bind,consistency=cached"
+    ],
+    "shutdownAction": "stopContainer",
+    "hostRequirements": {
+        "gpu": "optional"
+    },
+    "runArgs": [
+        "--gpus=all",
+        "--shm-size=2g"
+    ]
+}
