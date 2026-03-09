@@ -2,9 +2,11 @@
 Predict land parcel boundaries using high resolution aerial photography and segmentation models such as [U-Net](https://arxiv.org/abs/1505.04597) and [Unet++](https://arxiv.org/abs/1807.10165).
 
 # Setup
-This process uses open source geospatial packages and PyTorch. Use of a GPU is recommended for training the models and making predictions. Can optionally use the Docker setup used in development of this process, found in `/.devcontainer`. 
+This process uses open source geospatial packages and PyTorch. Use of a GPU is recommended for training the models and making predictions. 
 
 ## Using Docker
+Can optionally use the Docker setup I used in developing of this process. This is found under `/.devcontainer`. 
+
 1. First cd to the repo and build the Docker image:
 ```bash
 docker build -t boundary-segment .
