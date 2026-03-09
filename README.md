@@ -45,10 +45,15 @@ python -m pip install rschip segmentation-models-pytorch albumentations opencv-p
 ```
 
 # Training a segmentation model
+After you `git clone` this repository, you should acquire some images and put them into the repository `inputs/` directory.  
 
-Currently the process is available as a series of Python scripts with input arguments specified in the terminal. For all the scripts below, you can get the argparse command help.
+This process has been developed using the aerial photography available from [Bluesky under the APGB](https://apgb.blueskymapshop.com). 
+
+Scripts are available in this repository to complete all processing steps required, starting from the JPEG files you can request to download from Bluesky under the APGB.  
+
+The code in this repository is a series of Python scripts with input arguments specified in the terminal. For all the scripts described below, you can get help by running the following in the terminal:
 ```bash
-python <path to script.py> --help
+python path/name_of_script.py --help
 ```
 
 ## 1. Assign CRS and convert jpegs to geotiffs
