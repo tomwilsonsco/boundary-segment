@@ -9,7 +9,7 @@ Can optionally use the Docker setup I used in developing of this process. This i
 
 1. First cd to the repo and build the Docker image:
 ```bash
-docker build -t boundary-segment .
+docker build -t boundary-segment -f .devcontainer/Dockerfile .
 ```
 
 2. Run the container (mounting current directory to /app):
@@ -109,18 +109,20 @@ python unet/train.py --dataset-dir inputs/images/gretna/dataset --arch unetplusp
 We use the evaluate.py to use trained model to predict from each test set image and then report summary stats on intersect over union (IoU) and dice score.
 
 ```bash
-python unet/evaluate.py --dataset-dir inputs/images/gretna/dataset --model models/20260309_094957_test-025m_unetplusplus.pth
+python unet/evaluate.py --dataset-dir inputs/images/gretna/dataset --model models/example_test-025m_unetplusplus.pth
 ```
  **Note:**: Although given above, we do not necessarily need to specify the model .pth file as by default it will take the most recent based on date time saved in the .pth file name. The `--model` argument is needed if not testing the most recently available.
 
 ## 9. Predict with model
-Once a trained model is achieving test set prediction performance you are happy with, you can predict for all chipped images across a continuous extent and produce a geopackage output of the boundary line predictions.2
+Once a trained model is achieving test set prediction performance you are happy with, you can predict for all chipped images across a continuous extent and produce a geopackage output of the boundary line predictions.
 
 This process takes a while to complete on large extents.
 
 ```bash
-python unet/predict.py --input-dir inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips
+python unet/predict.py --input-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips"
 ```
+
+As with the evaluate script, predict will use the latest trained model in `models/` unless the `--model` argument is used to specify a different one.
 
 ## 10. Plot some prediction examples
 We can create plots as shown below for predictions on the test set of chips. Vary the number of samples and seed values to get different number and selection of plots.
