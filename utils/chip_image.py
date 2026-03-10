@@ -6,6 +6,7 @@ from shapely.geometry import box
 import geopandas as gpd
 import shutil
 import argparse
+import sys
 
 
 def parse_arguments(args=None):
@@ -32,7 +33,7 @@ def parse_arguments(args=None):
         "--chip-offset",
         type=int,
         default=384,
-        help="How much offset between chips, for example if size 512 and" \
+        help="How much offset between chips, for example if size 512 and"
         " offset of 384 this means an overlap of 128",
     )
 
@@ -52,17 +53,27 @@ def main(args):
         raise ValueError(f"VRT file not found: {vrt_path}")
 
     if args.chip_offset >= args.chip_size:
-        raise ValueError(f"Offset ({args.chip_offset}) must be smaller than chip size ({args.chip_size})")
+        raise ValueError(
+            f"Offset ({args.chip_offset}) must be smaller than chip size ({args.chip_size})"
+        )
 
     out_dir = vrt_path.parent / args.output_subdir
     out_dir.mkdir(exist_ok=True)
 
-    # Delete all files from out_dir if it exists
-    for file in out_dir.iterdir():
-        if file.is_file():
-            file.unlink()
-        elif file.is_dir():
-            shutil.rmtree(file)
+    # if output directory is not empty, prompt user to overwrite
+    if any(out_dir.iterdir()):
+        prompt = "Output directory for writing chips already exists. Continue and overwrite Y/N? "
+        response = input(prompt)
+        if response.lower() == "y":
+            print("Deleting existing files...")
+            for file in out_dir.iterdir():
+                if file.is_file():
+                    file.unlink()
+                elif file.is_dir():
+                    shutil.rmtree(file)
+        else:
+            print("Operation cancelled.")
+            sys.exit()
 
     # initialize rschip.ImageChip
     image_chipper = ImageChip(
