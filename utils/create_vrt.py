@@ -4,6 +4,7 @@ import argparse
 
 
 def parse_arguments(args=None):
+    """Parse user arguments using argparse"""
     parser = argparse.ArgumentParser(description="Create a VRT mosaic from TIFF files.")
     parser.add_argument(
         "--img-dir",
@@ -44,6 +45,7 @@ def main(args):
         ds = gdal.BuildVRT(
             str(output_vrt), [str(f) for f in tiff_files], options=options
         )
+        #clear it
         ds = None
         print("VRT file created successfully!")
 
