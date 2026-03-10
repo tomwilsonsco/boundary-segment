@@ -90,31 +90,36 @@ def main(args):
     chip_paths = list(chip_dir.glob("*.tif"))
     print(f"Processing {len(chip_paths)} chips...")
 
-    with tempfile.NamedTemporaryFile(suffix=".gpkg") as tmp:
-        temp_gpkg_path = Path(tmp.name)
+    tmp_file = tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False)
+    temp_gpkg_path = Path(tmp_file.name)
+    tmp_file.close() # release lock on tempfile (windows)
+
+    try:
         buffer_gdf.to_file(temp_gpkg_path, driver="GPKG")
 
         if not args.singleprocessor:
-            # Use available cores - 1
+            # use available cores - 1
             num_workers = max(1, multiprocessing.cpu_count() - 1)
             print(f"Using {num_workers} workers for processing.")
 
-            func = partial(
-                process_mask_creation, out_dir=out_dir, features_path=temp_gpkg_path
-            )
+            func = partial(process_mask_creation, out_dir=out_dir, features_path=temp_gpkg_path)
 
             with multiprocessing.Pool(num_workers) as pool:
                 list(
                     tqdm(
                         pool.imap_unordered(func, chip_paths),
                         total=len(chip_paths),
-                        desc="Generating masks",
+                        desc="Generating masks"
                     )
                 )
         else:
             print("Using single process.")
             for chip_path in tqdm(chip_paths, desc="Generating masks"):
                 process_mask_creation(chip_path, out_dir, temp_gpkg_path)
+    finally:
+        # clean up the temporary file
+        if temp_gpkg_path.exists():
+            temp_gpkg_path.unlink()
 
     print("Mask generation complete.")
 
