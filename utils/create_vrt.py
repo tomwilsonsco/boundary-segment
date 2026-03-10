@@ -14,7 +14,7 @@ def parse_arguments(args=None):
     parser.add_argument(
         "--output-filename",
         default="apgb_imgs.vrt",
-        help="Name of the output VRT file (default: aerial_mosaic.vrt)",
+        help="Name of the output VRT file (default: apgb_imgs.vrt)",
     )
     return parser.parse_args(args)
 
