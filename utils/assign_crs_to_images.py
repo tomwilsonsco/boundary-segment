@@ -67,7 +67,7 @@ def main(args):
     if not img_dir.exists():
         raise ValueError(f"Folder not found: {img_dir}")
 
-    image_files = list(img_dir.glob("*.jpg"))
+    image_files = list(img_dir.glob("*.jpg")) + list(img_dir.glob("*.JPG"))
 
     # Raise an error if the folder is empty of JPGs
     if not image_files:
