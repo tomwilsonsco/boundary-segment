@@ -469,7 +469,6 @@ def main(args):
                 "state_dict": model.state_dict(),
                 "arch": args.arch,
                 "encoder": args.encoder,
-                "encoder_weights": args.weights,
             }
             torch.save(inference_config, model_save_path)
         else:
