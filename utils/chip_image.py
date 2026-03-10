@@ -84,7 +84,9 @@ def main(args):
             geoms.append({"geometry": geom, "file_name": file_path.name})
 
         if geoms:
-            gdf = gpd.GeoDataFrame(geoms, crs="epsg:27700")
+            with rio.open(list(out_dir.glob("*.tif"))[0]) as src:
+                crs = src.crs
+            gdf = gpd.GeoDataFrame(geoms, crs=crs)
             gdf.to_file(out_dir / "chips_index.gpkg")
 
 
