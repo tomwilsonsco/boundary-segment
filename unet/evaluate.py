@@ -275,6 +275,13 @@ def main(args):
             image = cv2.imread(str(img_path))
             mask = cv2.imread(str(mask_path), 0)
 
+        if image is None:
+            print(f"\n[CRITICAL ERROR] Could not read IMAGE at: {img_path}")
+            print(
+                f"File size: {img_path.stat().st_size if img_path.exists() else 'Missing'} bytes"
+            )
+            raise ValueError(f"Corrupt file found: {img_path}")
+
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         mask = (mask > 0).astype(np.float32)
 
