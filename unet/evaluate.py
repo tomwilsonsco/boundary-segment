@@ -53,7 +53,7 @@ def calculate_iou(pred, target, threshold=0.5):
     union = np.logical_or(pred_binary, target_binary).sum()
 
     if union == 0:
-        return 1.0 if intersection == 0 else 0.0
+        return 1.0
 
     return intersection / union
 
