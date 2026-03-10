@@ -38,7 +38,7 @@ def process_func(file_path, out_dir, scale_factor):
 def parse_arguments(args=None):
     """Set up and parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Assign CRS to images and convert to TIFF."
+        description="Downscale geotiff images by a specific factor."
     )
     parser.add_argument(
         "--img-dir",
