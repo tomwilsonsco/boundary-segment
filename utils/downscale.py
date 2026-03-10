@@ -52,7 +52,7 @@ def parse_arguments(args=None):
         help="Name of the output subfolder to write downscaled images",
     )
     parser.add_argument(
-        "--downscale_factor",
+        "--downscale-factor",
         default=2,
         type=int,
         help="1/<input number> will be how much image is downscaled by."
