@@ -159,7 +159,7 @@ def parse_arguments(args=None):
         "--num-workers",
         type=int,
         default=None,
-        help="Number of workers for DataLoader. Defaults to min(os.cpu_count(), 8).",
+        help="Number of workers for DataLoader. Defaults to min(os.cpu_count(), 4).",
     )
     parser.add_argument(
         "--lr", type=float, default=1e-4, help="Learning rate. Default 0.0001."
