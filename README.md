@@ -134,7 +134,7 @@ python unet/example_plots.py --dataset-dir inputs/images/gretna/dataset  --parce
 ![Example test set prediction](plots/apgb_imgs_8832_40320_analysis.png)
 
 # Running full process
-A shell script is included that runs each stage in order for testing. This could be edited for production runs too. In a terminal after `cd` to the repository run:
+A shell script is included that runs each stage described above for testing. This could be edited for production runs too. In a terminal after `cd` to the repository run:
 
 ```bash
 bash run_test_pipeline.sh
