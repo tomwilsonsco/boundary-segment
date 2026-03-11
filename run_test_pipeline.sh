@@ -2,7 +2,7 @@
 # run the full pipeline covered in the README.md on a dataset for testing purposes.
 # uses minimal training parameters (unet, 1 epoch, efficientnet-b0) for speed.
 
-set -e # exit is non 0 status
+set -euo pipefail
 
 # adjust to relative paths
 SOURCE_IMAGES_DIR="inputs/images/gretna/12.5cm Aerial Photo"
@@ -44,7 +44,7 @@ python utils/create_vrt.py \
     --img-dir "${DOWNSCALE_DIR}"
 
 # Detect the VRT file created (Assuming one VRT is created in the dir)
-VRT_FILE=$(ls "${DOWNSCALE_DIR}"/*.vrt | head -n1)
+VRT_FILE=$(find "${DOWNSCALE_DIR}" -maxdepth 1 -name "*.vrt" | head -n1)
 if [ -z "$VRT_FILE" ]; then
     echo "Error: No VRT file found in ${DOWNSCALE_DIR}"
     exit 1
@@ -87,7 +87,7 @@ python unet/train.py \
     --output-dir "${MODEL_DIR}" \
     --desc "${EXP_NAME}"
 
-# # Detect the trained model path (ignoring the checkpoint file)
+# Detect the trained model path (ignoring the checkpoint file)
 MODEL_PATH=$(ls -t "${MODEL_DIR}"/*_${EXP_NAME}_*.pth | grep -v "checkpoint" | head -n1)
 echo "Using trained model: ${MODEL_PATH}"
 

@@ -44,7 +44,9 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 
 REM Detect the VRT file created (find the first .vrt file)
 set "VRT_FILE="
-for %%f in ("%DOWNSCALE_DIR%\*.vrt") do set "VRT_FILE=%%f"
+for %%f in ("%DOWNSCALE_DIR%\*.vrt") do (
+    if not defined VRT_FILE set "VRT_FILE=%%f"
+)
 
 if not defined VRT_FILE (
     echo Error: No VRT file found in %DOWNSCALE_DIR%
@@ -103,5 +105,8 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 REM 10. Example Plots
 echo [Step 10] Generating analysis plots...
 python unet\example_plots.py --dataset-dir "%DATASET_DIR%" --parcels-gpkg "%PARCELS_GPKG%" --model "%MODEL_PATH%" --output-dir "%OUTPUT_ROOT%\plots" --num-samples 5
+if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Pipeline test complete. Outputs in %OUTPUT_ROOT%
+
+endlocal

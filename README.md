@@ -139,7 +139,7 @@ A shell script is included that runs each stage described above for testing. Thi
 ```bash
 bash run_test_pipeline.sh
 ```
-An equivalent CMD is available for Windows users. On Windows you may need to enable your Conda env first see [instructions for windows users](#instructions-for-windows-users-non-Docker) and then run:
+An equivalent CMD is available for Windows users. On Windows you may need to enable your Conda env first see [instructions for windows users](#instructions-for-windows-users-non-docker) and then run:
 
 ```powershell
 run_test_pipeline.cmd
