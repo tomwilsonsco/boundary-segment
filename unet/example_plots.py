@@ -91,7 +91,7 @@ def get_mask_paths(basenames, mask_dir):
 
 
 def load_parcels(parcels_path):
-    """Load gretna_parcels.gpkg.
+    """Load the land parcels.gpkg for AOI.
     
     Returns:
         GeoDataFrame of parcels
@@ -117,7 +117,8 @@ def run_unet_predict(input_dir, output_dir, model_path=None):
         
     result = subprocess.run(
         cmd,
-        text=True
+        text=True,
+        capture_output=True
     )
     
     temp_pred_dir = output_dir / "temp_preds"
@@ -126,6 +127,7 @@ def run_unet_predict(input_dir, output_dir, model_path=None):
         if len(pred_files) > 0:
             print(f"Warning: predict.py exited with code {result.returncode}, but {len(pred_files)} predictions found. Continuing...")
         else:
+            print(f"Prediction process failed.\nStdout: {result.stdout}\nStderr: {result.stderr}")
             raise RuntimeError(f"Prediction failed with return code {result.returncode} and no predictions found")
     print("Prediction complete.")
 
@@ -346,7 +348,7 @@ def parse_arguments():
     parser.add_argument(
         "--parcels-gpkg", 
         type=Path, 
-        default=Path("inputs/gretna_parcels.gpkg"),
+        default=Path("inputs/aoi_parcels.gpkg"),
         help="Path to ground truth parcels GPKG"
     )
     parser.add_argument(
@@ -446,7 +448,7 @@ def main(args):
         pred_lines_gdf = gpd.read_file(output_gpkg)
         print(f"Loaded {len(pred_lines_gdf)} predicted boundary lines")
     except FileNotFoundError:
-        print("Warning: No output gpkg found (merge may have failed). Panel 6 will show no lines.")
+        print("Warning: No output gpkg found (merge may have failed). Plot 6 will show no pred lines.")
         pred_lines_gdf = gpd.GeoDataFrame(geometry=[], crs="EPSG:27700")
     
     # plots
