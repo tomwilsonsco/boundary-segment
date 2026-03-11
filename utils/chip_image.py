@@ -42,6 +42,12 @@ def parse_arguments(args=None):
         action="store_true",
         help="Create a GPKG index layer of the chips",
     )
+    parser.add_argument(
+        "--overwrite-output-dir",
+        action="store_true",
+        help="Overwrite if output directory already exists. "
+        "If not set the process will stop if output directory already exists.",
+    )
     return parser.parse_args(args)
 
 
@@ -62,9 +68,7 @@ def main(args):
 
     # if output directory is not empty, prompt user to overwrite
     if any(out_dir.iterdir()):
-        prompt = "Output directory for writing chips already exists. Continue and overwrite Y/N? "
-        response = input(prompt)
-        if response.lower() == "y":
+        if args.overwrite_output_dir:
             print("Deleting existing files...")
             for file in out_dir.iterdir():
                 if file.is_file():
