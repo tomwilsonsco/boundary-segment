@@ -77,7 +77,7 @@ def main(args):
                     shutil.rmtree(file)
         else:
             print("Operation cancelled.")
-            sys.exit()
+            sys.exit(1)
 
     # initialize rschip.ImageChip
     image_chipper = ImageChip(
