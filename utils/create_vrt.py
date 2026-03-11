@@ -45,7 +45,7 @@ def main(args):
         ds = gdal.BuildVRT(
             str(output_vrt), [str(f) for f in tiff_files], options=options
         )
-        #clear it
+        # release the dataset so that the VRT is closed
         ds = None
         print("VRT file created successfully!")
 
