@@ -127,7 +127,6 @@ def predict_chips(model, input_dir, temp_dir, device):
 
     with torch.no_grad():
         for chip_path in tqdm(chip_files, desc="Inference"):
-            # Read image
             with suppress_stderr():
                 image = cv2.imread(str(chip_path))
             
@@ -137,19 +136,16 @@ def predict_chips(model, input_dir, temp_dir, device):
                 
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-            # Read metadata for georeferencing
             with rasterio.open(chip_path) as src:
                 profile = src.profile.copy()
 
-            # Preprocess
             augmented = transform(image=image)
             img_tensor = augmented["image"].unsqueeze(0).to(device)
 
-            # Predict
+
             logits = model(img_tensor)
             prob_map = torch.sigmoid(logits).squeeze().cpu().numpy()
 
-            # Save prediction
             out_path = temp_dir / chip_path.name
             profile.update(
                 {
@@ -175,7 +171,6 @@ def build_vrt(vrt_path, input_files):
         options = gdal.BuildVRTOptions(
             resampleAlg=gdal.GRA_NearestNeighbour, resolution="highest"
         )
-        # Convert paths to strings for GDAL
         input_strs = [str(f) for f in input_files]
         gdal.BuildVRT(str(vrt_path), input_strs, options=options)
         return True
@@ -223,17 +218,10 @@ def process_vrt_to_lines(vrt_path, chunk_size=2048, threshold=0.5):
 
         print(f"Mosaic dimensions: {width} x {height} pixels")
         
-        # Memory safety check
-        mem_required_gb = (width * height) / (1024**3)
-        print(f"Required memory for skeleton mask: {mem_required_gb:.2f} GB")
-        
-        if mem_required_gb > 16:
-            print("WARNING: High memory usage detected. Ensure sufficient RAM is available.")
-
-        # Initialize full skeleton array (uint8 is efficient)
+        # initialize full mask array (uint8 is efficient)
         full_skeleton = np.zeros((height, width), dtype=np.uint8)
 
-        # Calculate number of chunks
+        # calculate number of chunks
         n_chunks_x = int(np.ceil(width / chunk_size))
         n_chunks_y = int(np.ceil(height / chunk_size))
         total_chunks = n_chunks_x * n_chunks_y
@@ -243,19 +231,16 @@ def process_vrt_to_lines(vrt_path, chunk_size=2048, threshold=0.5):
         with tqdm(total=total_chunks, desc="Processing chunks") as pbar:
             for row_start in range(0, height, chunk_size):
                 for col_start in range(0, width, chunk_size):
-                    # Calculate chunk dimensions
+
                     chunk_height = min(chunk_size, height - row_start)
                     chunk_width = min(chunk_size, width - col_start)
 
-                    # Read chunk
                     window = Window(col_start, row_start, chunk_width, chunk_height)
                     chunk = src.read(1, window=window)
 
-                    # Threshold and skeletonize chunk
                     binary_chunk = (chunk > threshold).astype(np.uint8)
                     skeleton_chunk = skeletonize(binary_chunk).astype(np.uint8)
 
-                    # Store in full skeleton array
                     full_skeleton[
                         row_start : row_start + chunk_height,
                         col_start : col_start + chunk_width,
