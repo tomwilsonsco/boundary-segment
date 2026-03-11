@@ -132,3 +132,15 @@ python unet/example_plots.py --dataset-dir inputs/images/gretna/dataset  --parce
 ```
 
 ![Example test set prediction](plots/apgb_imgs_8832_40320_analysis.png)
+
+# Running full process
+A shell script is included that runs each stage in order for testing. This could be edited for production runs too. In a terminal after `cd` to the repository run:
+
+```bash
+bash run_test_pipeline.sh
+```
+An equivalent CMD is available for Windows users. On Windows you may need to enable your Conda env first see [instructions for windows users](#instructions-for-windows-users-non-Docker) and then run:
+
+```powershell
+run_test_pipeline.cmd
+```
