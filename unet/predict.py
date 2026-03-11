@@ -179,7 +179,7 @@ def build_vrt(vrt_path, input_files):
         return False
 
 
-def skeleton_to_lines(skeleton, transform):
+def skeleton_to_lines(skeleton, transform, min_contour_length=5):
     """Convert skeletonized binary mask to vector LineStrings."""
     contours, _ = cv2.findContours(skeleton, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     lines = []
@@ -187,7 +187,7 @@ def skeleton_to_lines(skeleton, transform):
     print(f"Vectorizing {len(contours)} detected segments...")
 
     for cnt in tqdm(contours, desc="Vectorizing"):
-        if len(cnt) < 5:
+        if len(cnt) < min_contour_length:
             continue
         coords_pix = cnt.squeeze().astype(float)
         if len(coords_pix.shape) != 2:
@@ -206,7 +206,7 @@ def skeleton_to_lines(skeleton, transform):
     return lines
 
 
-def process_vrt_to_lines(vrt_path, chunk_size=2048, threshold=0.5):
+def process_vrt_to_lines(vrt_path, chunk_size=2048, threshold=0.5, min_contour_length=5):
     """Process VRT in chunks to create skeleton and vectorize."""
     print("Opening VRT for chunked processing...")
 
@@ -249,7 +249,7 @@ def process_vrt_to_lines(vrt_path, chunk_size=2048, threshold=0.5):
                     pbar.update(1)
 
         print("Converting skeleton to vector lines...")
-        lines = skeleton_to_lines(full_skeleton, transform)
+        lines = skeleton_to_lines(full_skeleton, transform, min_contour_length=min_contour_length)
 
         return lines, crs
 
@@ -291,6 +291,12 @@ def parse_arguments():
         type=int,
         default=2048,
         help="Chunk size for processing VRT. Default: 2048",
+    )
+    parser.add_argument(
+        "--min-contour-length",
+        type=int,
+        default=5,
+        help="Minimum number of vertices for a line prediction to be retained. Default: 5",
     )
 
     return parser.parse_args()
@@ -339,7 +345,12 @@ def main():
         return
 
     # 5. Process VRT -> Skeleton -> Lines
-    lines, crs = process_vrt_to_lines(vrt_path, args.chunk_size, args.threshold)
+    lines, crs = process_vrt_to_lines(
+        vrt_path, 
+        chunk_size=args.chunk_size, 
+        threshold=args.threshold,
+        min_contour_length=args.min_contour_length
+    )
 
     # 6. Save Output
     if lines:
