@@ -129,11 +129,11 @@ def predict_chips(model, input_dir, temp_dir, device):
         for chip_path in tqdm(chip_files, desc="Inference"):
             with suppress_stderr():
                 image = cv2.imread(str(chip_path))
-            
+
             if image is None:
                 print(f"Warning: Could not read {chip_path}")
                 continue
-                
+
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
             with rasterio.open(chip_path) as src:
@@ -141,7 +141,6 @@ def predict_chips(model, input_dir, temp_dir, device):
 
             augmented = transform(image=image)
             img_tensor = augmented["image"].unsqueeze(0).to(device)
-
 
             logits = model(img_tensor)
             prob_map = torch.sigmoid(logits).squeeze().cpu().numpy()
@@ -206,7 +205,9 @@ def skeleton_to_lines(skeleton, transform, min_contour_length=5):
     return lines
 
 
-def process_vrt_to_lines(vrt_path, chunk_size=2048, threshold=0.5, min_contour_length=5):
+def process_vrt_to_lines(
+    vrt_path, chunk_size=2048, threshold=0.5, min_contour_length=5
+):
     """Process VRT in chunks to create skeleton and vectorize."""
     print("Opening VRT for chunked processing...")
 
@@ -217,7 +218,7 @@ def process_vrt_to_lines(vrt_path, chunk_size=2048, threshold=0.5, min_contour_l
         crs = src.crs
 
         print(f"Mosaic dimensions: {width} x {height} pixels")
-        
+
         # initialize full mask array (uint8 is efficient)
         full_skeleton = np.zeros((height, width), dtype=np.uint8)
 
@@ -226,7 +227,9 @@ def process_vrt_to_lines(vrt_path, chunk_size=2048, threshold=0.5, min_contour_l
         n_chunks_y = int(np.ceil(height / chunk_size))
         total_chunks = n_chunks_x * n_chunks_y
 
-        print(f"Processing in {chunk_size}x{chunk_size} chunks ({total_chunks} total)...")
+        print(
+            f"Processing in {chunk_size}x{chunk_size} chunks ({total_chunks} total)..."
+        )
 
         with tqdm(total=total_chunks, desc="Processing chunks") as pbar:
             for row_start in range(0, height, chunk_size):
@@ -249,7 +252,9 @@ def process_vrt_to_lines(vrt_path, chunk_size=2048, threshold=0.5, min_contour_l
                     pbar.update(1)
 
         print("Converting skeleton to vector lines...")
-        lines = skeleton_to_lines(full_skeleton, transform, min_contour_length=min_contour_length)
+        lines = skeleton_to_lines(
+            full_skeleton, transform, min_contour_length=min_contour_length
+        )
 
         return lines, crs
 
@@ -318,7 +323,7 @@ def main():
                 candidates.sort(key=lambda f: f.name)
                 args.model = candidates[-1]
                 print(f"No model specified. Using most recent: {args.model}")
-    
+
     if not args.model or not args.model.exists():
         print(f"Error: Model not found: {args.model}")
         return
@@ -334,7 +339,7 @@ def main():
     # 3. Predict
     print("Starting inference...")
     pred_files = predict_chips(model, args.input_dir, temp_dir, device)
-    
+
     if not pred_files:
         print("No predictions generated. Exiting.")
         return
@@ -346,10 +351,10 @@ def main():
 
     # 5. Process VRT -> Skeleton -> Lines
     lines, crs = process_vrt_to_lines(
-        vrt_path, 
-        chunk_size=args.chunk_size, 
+        vrt_path,
+        chunk_size=args.chunk_size,
         threshold=args.threshold,
-        min_contour_length=args.min_contour_length
+        min_contour_length=args.min_contour_length,
     )
 
     # 6. Save Output
@@ -357,7 +362,7 @@ def main():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_name = args.model.stem
         out_gpkg = args.output_dir / f"{timestamp}_{model_name}_boundaries.gpkg"
-        
+
         print(f"Saving {len(lines)} boundaries to {out_gpkg}...")
         gdf = gpd.GeoDataFrame(geometry=lines, crs=crs)
         gdf.to_file(out_gpkg, driver="GPKG")

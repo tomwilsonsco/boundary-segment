@@ -281,7 +281,7 @@ def main(args):
                 f"File size: {img_path.stat().st_size if img_path.exists() else 'Missing'} bytes"
             )
             raise ValueError(f"Corrupt file found: {img_path}")
-        
+
         if mask is None:
             print(f"\n[CRITICAL ERROR] Could not read MASK at: {mask_path}")
             print(

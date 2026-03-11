@@ -54,10 +54,10 @@ def parse_arguments(args=None):
         help="Random seed for reproducible splits (default: 42).",
     )
     parser.add_argument(
-        '--no-filter-background-only',
-        dest='filter_background_only',
-        action='store_false',
-        help="If set, does NOT filter out image/mask pairs that only contain background."
+        "--no-filter-background-only",
+        dest="filter_background_only",
+        action="store_false",
+        help="If set, does NOT filter out image/mask pairs that only contain background.",
     )
     return parser.parse_args(args)
 

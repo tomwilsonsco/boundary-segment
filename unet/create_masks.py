@@ -94,7 +94,7 @@ def main(args):
 
     tmp_file = tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False)
     temp_gpkg_path = Path(tmp_file.name)
-    tmp_file.close() # release lock on tempfile (windows)
+    tmp_file.close()  # release lock on tempfile (windows)
 
     success_count = 0
     try:
@@ -105,14 +105,16 @@ def main(args):
             num_workers = max(1, multiprocessing.cpu_count() - 1)
             print(f"Using {num_workers} workers for processing.")
 
-            func = partial(process_mask_creation, out_dir=out_dir, features_path=temp_gpkg_path)
+            func = partial(
+                process_mask_creation, out_dir=out_dir, features_path=temp_gpkg_path
+            )
 
             with multiprocessing.Pool(num_workers) as pool:
                 results = list(
                     tqdm(
                         pool.imap_unordered(func, chip_paths),
                         total=len(chip_paths),
-                        desc="Generating masks"
+                        desc="Generating masks",
                     )
                 )
             success_count = sum(results)
@@ -127,7 +129,9 @@ def main(args):
             temp_gpkg_path.unlink()
 
     failed_count = len(chip_paths) - success_count
-    print(f"Mask generation complete. Succeeded: {success_count}, Failed: {failed_count}")
+    print(
+        f"Mask generation complete. Succeeded: {success_count}, Failed: {failed_count}"
+    )
 
 
 if __name__ == "__main__":
