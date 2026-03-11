@@ -119,7 +119,7 @@ Once a trained model is achieving test set prediction performance you are happy 
 This process takes a while to complete on large extents.
 
 ```bash
-python unet/predict.py --input-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips"
+python unet/predict.py --input-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips" --parcels-gpkg "inputs/gretna_parcels.gpkg"
 ```
 
 As with the evaluate script, predict will use the latest trained model in `models/` unless the `--model` argument is used to specify a different one.
