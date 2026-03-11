@@ -18,8 +18,10 @@ def process_mask_creation(chip_path, out_dir, features_path):
             output_path=out_path,
         )
         mask.create_mask(silent=True)
+        return True
     except Exception as e:
         print(f"Error processing {chip_path.name}: {e}")
+        return False
 
 
 def parse_arguments(args=None):
@@ -90,12 +92,16 @@ def main(args):
     chip_paths = list(chip_dir.glob("*.tif"))
     print(f"Processing {len(chip_paths)} chips...")
 
-    with tempfile.NamedTemporaryFile(suffix=".gpkg") as tmp:
-        temp_gpkg_path = Path(tmp.name)
+    tmp_file = tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False)
+    temp_gpkg_path = Path(tmp_file.name)
+    tmp_file.close()  # release lock on tempfile (windows)
+
+    success_count = 0
+    try:
         buffer_gdf.to_file(temp_gpkg_path, driver="GPKG")
 
         if not args.singleprocessor:
-            # Use available cores - 1
+            # use available cores - 1
             num_workers = max(1, multiprocessing.cpu_count() - 1)
             print(f"Using {num_workers} workers for processing.")
 
@@ -104,19 +110,28 @@ def main(args):
             )
 
             with multiprocessing.Pool(num_workers) as pool:
-                list(
+                results = list(
                     tqdm(
                         pool.imap_unordered(func, chip_paths),
                         total=len(chip_paths),
                         desc="Generating masks",
                     )
                 )
+            success_count = sum(results)
         else:
             print("Using single process.")
             for chip_path in tqdm(chip_paths, desc="Generating masks"):
-                process_mask_creation(chip_path, out_dir, temp_gpkg_path)
+                if process_mask_creation(chip_path, out_dir, temp_gpkg_path):
+                    success_count += 1
+    finally:
+        # clean up the temporary file
+        if temp_gpkg_path.exists():
+            temp_gpkg_path.unlink()
 
-    print("Mask generation complete.")
+    failed_count = len(chip_paths) - success_count
+    print(
+        f"Mask generation complete. Succeeded: {success_count}, Failed: {failed_count}"
+    )
 
 
 if __name__ == "__main__":

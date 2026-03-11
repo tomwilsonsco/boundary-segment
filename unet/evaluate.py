@@ -53,7 +53,7 @@ def calculate_iou(pred, target, threshold=0.5):
     union = np.logical_or(pred_binary, target_binary).sum()
 
     if union == 0:
-        return 1.0 if intersection == 0 else 0.0
+        return 1.0
 
     return intersection / union
 
@@ -274,6 +274,20 @@ def main(args):
         with suppress_stderr():
             image = cv2.imread(str(img_path))
             mask = cv2.imread(str(mask_path), 0)
+
+        if image is None:
+            print(f"\n[CRITICAL ERROR] Could not read IMAGE at: {img_path}")
+            print(
+                f"File size: {img_path.stat().st_size if img_path.exists() else 'Missing'} bytes"
+            )
+            raise ValueError(f"Corrupt file found: {img_path}")
+
+        if mask is None:
+            print(f"\n[CRITICAL ERROR] Could not read MASK at: {mask_path}")
+            print(
+                f"File size: {mask_path.stat().st_size if mask_path.exists() else 'Missing'} bytes"
+            )
+            raise ValueError(f"Corrupt file found: {mask_path}")
 
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         mask = (mask > 0).astype(np.float32)

@@ -156,6 +156,12 @@ def parse_arguments(args=None):
         "--batch-size", type=int, default=8, help="Batch size for training. Default 8."
     )
     parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=None,
+        help="Number of workers for DataLoader. Defaults to min(os.cpu_count(), 4).",
+    )
+    parser.add_argument(
         "--lr", type=float, default=1e-4, help="Learning rate. Default 0.0001."
     )
     parser.add_argument(
@@ -245,19 +251,34 @@ def main(args):
         transform=get_validation_augmentation(),
     )
 
+    # determine number of workers for DataLoader
+    num_cores = os.cpu_count() or 1
+    if args.num_workers is None:
+        num_workers = min(num_cores, 4)
+    else:
+        num_workers = args.num_workers
+        if num_workers > num_cores:
+            print(
+                f"Warning: --num-workers ({num_workers}) is greater than available cores ({num_cores}). "
+                f"Using {num_cores} to avoid resource overallocation."
+            )
+            num_workers = num_cores
+
+    print(f"Using {num_workers} workers for data loading.")
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=4,
-        pin_memory=True,  # Faster data transfer to GPU
-        persistent_workers=True,  # Keep workers alive between epochs
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=True,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=4,
+        num_workers=num_workers,
         pin_memory=True,
         persistent_workers=True,
     )
@@ -377,7 +398,7 @@ def main(args):
             )  # non_blocking with pin_memory
             masks = masks.to(DEVICE, non_blocking=True)
 
-            with autocast("cuda", enabled=use_amp):
+            with autocast(DEVICE, enabled=use_amp):
                 logits = model(images)
                 loss = dice_loss(logits, masks) + focal_loss(logits, masks)
                 loss = loss / args.accum_steps
@@ -405,7 +426,7 @@ def main(args):
                 masks = masks.to(DEVICE, non_blocking=True)
 
                 # mixed precision validation
-                with autocast("cuda", enabled=use_amp):
+                with autocast(DEVICE, enabled=use_amp):
                     logits = model(images)
                     loss = dice_loss(logits, masks) + focal_loss(logits, masks)
                 val_loss += loss.item()
@@ -448,7 +469,6 @@ def main(args):
                 "state_dict": model.state_dict(),
                 "arch": args.arch,
                 "encoder": args.encoder,
-                "encoder_weights": args.weights,
             }
             torch.save(inference_config, model_save_path)
         else:

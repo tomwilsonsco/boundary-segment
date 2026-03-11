@@ -6,6 +6,7 @@ from shapely.geometry import box
 import geopandas as gpd
 import shutil
 import argparse
+import sys
 
 
 def parse_arguments(args=None):
@@ -32,7 +33,7 @@ def parse_arguments(args=None):
         "--chip-offset",
         type=int,
         default=384,
-        help="How much offset between chips, for example if size 512 and" \
+        help="How much offset between chips, for example if size 512 and"
         " offset of 384 this means an overlap of 128",
     )
 
@@ -40,6 +41,12 @@ def parse_arguments(args=None):
         "--create-index-layer",
         action="store_true",
         help="Create a GPKG index layer of the chips",
+    )
+    parser.add_argument(
+        "--overwrite-output-dir",
+        action="store_true",
+        help="Overwrite if output directory already exists. "
+        "If not set the process will stop if output directory already exists.",
     )
     return parser.parse_args(args)
 
@@ -52,17 +59,25 @@ def main(args):
         raise ValueError(f"VRT file not found: {vrt_path}")
 
     if args.chip_offset >= args.chip_size:
-        raise ValueError(f"Offset ({args.chip_offset}) must be smaller than chip size ({args.chip_size})")
+        raise ValueError(
+            f"Offset ({args.chip_offset}) must be smaller than chip size ({args.chip_size})"
+        )
 
     out_dir = vrt_path.parent / args.output_subdir
     out_dir.mkdir(exist_ok=True)
 
-    # Delete all files from out_dir if it exists
-    for file in out_dir.iterdir():
-        if file.is_file():
-            file.unlink()
-        elif file.is_dir():
-            shutil.rmtree(file)
+    # if output directory is not empty, prompt user to overwrite
+    if any(out_dir.iterdir()):
+        if args.overwrite_output_dir:
+            print("Deleting existing files...")
+            for file in out_dir.iterdir():
+                if file.is_file():
+                    file.unlink()
+                elif file.is_dir():
+                    shutil.rmtree(file)
+        else:
+            print("Operation cancelled.")
+            sys.exit(1)
 
     # initialize rschip.ImageChip
     image_chipper = ImageChip(
@@ -84,7 +99,9 @@ def main(args):
             geoms.append({"geometry": geom, "file_name": file_path.name})
 
         if geoms:
-            gdf = gpd.GeoDataFrame(geoms, crs="epsg:27700")
+            with rio.open(list(out_dir.glob("*.tif"))[0]) as src:
+                crs = src.crs
+            gdf = gpd.GeoDataFrame(geoms, crs=crs)
             gdf.to_file(out_dir / "chips_index.gpkg")
 
 

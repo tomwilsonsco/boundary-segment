@@ -7,7 +7,8 @@ import argparse
 from functools import partial
 
 
-def process_func(file_path, out_dir, scale_factor):
+def downscale_image(file_path, out_dir, scale_factor):
+    """Downscale an image by a specified factor"""
     output_file = out_dir / f"{file_path.stem}_ds.tif"
     with rasterio.open(file_path) as src:
         # calculate new dimensions
@@ -38,7 +39,7 @@ def process_func(file_path, out_dir, scale_factor):
 def parse_arguments(args=None):
     """Set up and parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Assign CRS to images and convert to TIFF."
+        description="Downscale geotiff images by a specific factor."
     )
     parser.add_argument(
         "--img-dir",
@@ -52,7 +53,7 @@ def parse_arguments(args=None):
         help="Name of the output subfolder to write downscaled images",
     )
     parser.add_argument(
-        "--downscale_factor",
+        "--downscale-factor",
         default=2,
         type=int,
         help="1/<input number> will be how much image is downscaled by."
@@ -92,7 +93,7 @@ def main(args):
         num_workers = max(1, multiprocessing.cpu_count() - 1)
         print(f"Using {num_workers} workers for processing.")
 
-        func = partial(process_func, out_dir=out_dir, scale_factor=scale_factor)
+        func = partial(downscale_image, out_dir=out_dir, scale_factor=scale_factor)
 
         with multiprocessing.Pool(num_workers) as pool:
             list(
@@ -105,7 +106,7 @@ def main(args):
     else:
         print("Using single process.")
         for file_path in tqdm(image_files, desc="Downscaling geotiffs"):
-            process_func(file_path, out_dir, scale_factor)
+            downscale_image(file_path, out_dir, scale_factor)
 
 
 if __name__ == "__main__":
