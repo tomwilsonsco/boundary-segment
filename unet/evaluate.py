@@ -283,11 +283,11 @@ def main(args):
             raise ValueError(f"Corrupt file found: {img_path}")
         
         if mask is None:
-            print(f"\n[CRITICAL ERROR] Could not read MASK at: {img_path}")
+            print(f"\n[CRITICAL ERROR] Could not read MASK at: {mask_path}")
             print(
-                f"File size: {img_path.stat().st_size if img_path.exists() else 'Missing'} bytes"
+                f"File size: {mask_path.stat().st_size if mask_path.exists() else 'Missing'} bytes"
             )
-            raise ValueError(f"Corrupt file found: {img_path}")
+            raise ValueError(f"Corrupt file found: {mask_path}")
 
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         mask = (mask > 0).astype(np.float32)
