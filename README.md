@@ -119,7 +119,7 @@ Once a trained model is achieving test set prediction performance you are happy 
 This process takes a while to complete on large extents.
 
 ```bash
-python unet/predict.py --input-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips" --parcels-gpkg "inputs/gretna_parcels.gpkg"
+python unet/predict.py --input-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips"
 ```
 
 As with the evaluate script, predict will use the latest trained model in `models/` unless the `--model` argument is used to specify a different one.
@@ -128,7 +128,7 @@ As with the evaluate script, predict will use the latest trained model in `model
 We can create plots as shown below for predictions on the test set of chips. Vary the number of samples and seed values to get different number and selection of plots.
 
 ```bash
-python unet/example_plots.py --dataset-dir inputs/images/gretna/dataset --num-samples 5 --seed 999
+python unet/example_plots.py --dataset-dir inputs/images/gretna/dataset  --parcels-gpkg "inputs/gretna_parcels.gpkg" --num-samples 5 --seed 999
 ```
 
 ![Example test set prediction](plots/apgb_imgs_8832_40320_analysis.png)
