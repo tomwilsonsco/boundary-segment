@@ -4,6 +4,8 @@ import shutil
 from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime
+import threading
+import queue
 
 import torch
 import cv2
@@ -113,52 +115,122 @@ def load_model(model_path, device):
     return model
 
 
-def predict_chips(model, input_dir, temp_dir, device):
-    """Run inference on all chips in input_dir and save to temp_dir."""
+class ChipInferenceDataset(torch.utils.data.Dataset):
+    """
+    Minimal Dataset for inference — reads chips and returns tensor + profile metadata.
+    Storing the profile per-chip is cheap (it's just a small dict).
+    """
+
+    def __init__(self, chip_files, transform):
+        self.chip_files = chip_files
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.chip_files)
+
+    def __getitem__(self, idx):
+        chip_path = self.chip_files[idx]
+        with suppress_stderr():
+            image = cv2.imread(str(chip_path))
+        if image is None:
+            h, w = 128, 128
+            return torch.zeros(3, h, w), str(chip_path), False
+
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        augmented = self.transform(image=image)
+        img_tensor = augmented["image"]
+        return img_tensor, str(chip_path), True
+
+
+def _writer_worker(write_queue, input_dir, temp_dir):
+    """
+    Runs in a background thread — drains (prob_map, chip_path) pairs from
+    the queue and writes GeoTIFF prediction files without blocking inference.
+    """
+    while True:
+        item = write_queue.get()
+        if item is None:
+            break
+        prob_map, chip_path_str, valid = item
+        if not valid:
+            write_queue.task_done()
+            continue
+
+        chip_path = Path(chip_path_str)
+        out_path = temp_dir / chip_path.name
+
+        with rasterio.open(chip_path) as src:
+            profile = src.profile.copy()
+
+        profile.update({"dtype": "float32", "count": 1, "compress": "lzw", "nodata": 0})
+
+        with rasterio.open(out_path, "w", **profile) as dst:
+            dst.write(prob_map, 1)
+
+        write_queue.task_done()
+
+
+def predict_chips(model, input_dir, temp_dir, device, batch_size=32, num_workers=4):
+    """
+    Run batched inference on all chips in input_dir and save to temp_dir.
+
+    Args:
+        batch_size: Number of chips per GPU forward pass.
+        num_workers: CPU workers for DataLoader prefetch.
+    """
     transform = get_preprocessing()
-    chip_files = list(input_dir.glob("*.tif"))
+    chip_files = sorted(input_dir.glob("*.tif"))
 
     if not chip_files:
         print(f"No .tif files found in {input_dir}")
         return []
 
-    print(f"Predicting on {len(chip_files)} chips...")
+    print(
+        f"Predicting on {len(chip_files)} chips "
+        f"(batch_size={batch_size}, num_workers={num_workers})..."
+    )
+
+    dataset = ChipInferenceDataset(chip_files, transform)
+    loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=(device == "cuda"),
+        prefetch_factor=2 if num_workers > 0 else None,
+        persistent_workers=(num_workers > 0),
+    )
+
+    # Background writer thread — decouples GPU inference from disk writes
+    write_queue = queue.Queue(maxsize=batch_size * 4)
+    writer_thread = threading.Thread(
+        target=_writer_worker,
+        args=(write_queue, input_dir, temp_dir),
+        daemon=True,
+    )
+    writer_thread.start()
+
     output_files = []
+    use_amp = device == "cuda"
 
     with torch.no_grad():
-        for chip_path in tqdm(chip_files, desc="Inference"):
-            with suppress_stderr():
-                image = cv2.imread(str(chip_path))
+        for img_tensors, chip_paths, valids in tqdm(loader, desc="Inference"):
+            img_tensors = img_tensors.to(device, non_blocking=True)
 
-            if image is None:
-                print(f"Warning: Could not read {chip_path}")
-                continue
+            with torch.amp.autocast(device, enabled=use_amp):
+                logits = model(img_tensors)
+                prob_maps = torch.sigmoid(logits).squeeze(1).cpu().numpy()
+                # squeeze(1): (B,1,H,W) -> (B,H,W)
 
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            for prob_map, chip_path_str, valid in zip(prob_maps, chip_paths, valids):
+                valid_bool = valid.item() if isinstance(valid, torch.Tensor) else valid
+                write_queue.put((prob_map, chip_path_str, valid_bool))
+                if valid_bool:
+                    output_files.append(temp_dir / Path(chip_path_str).name)
 
-            with rasterio.open(chip_path) as src:
-                profile = src.profile.copy()
-
-            augmented = transform(image=image)
-            img_tensor = augmented["image"].unsqueeze(0).to(device)
-
-            logits = model(img_tensor)
-            prob_map = torch.sigmoid(logits).squeeze().cpu().numpy()
-
-            out_path = temp_dir / chip_path.name
-            profile.update(
-                {
-                    "dtype": "float32",
-                    "count": 1,
-                    "compress": "lzw",
-                    "nodata": 0,
-                }
-            )
-
-            with rasterio.open(out_path, "w", **profile) as dst:
-                dst.write(prob_map, 1)
-
-            output_files.append(out_path)
+    # Signal writer to finish and wait for all writes to complete
+    write_queue.put(None)
+    writer_thread.join()
 
     return output_files
 
@@ -303,6 +375,18 @@ def parse_arguments():
         default=5,
         help="Minimum number of vertices for a line prediction to be retained. Default: 5",
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Batch size for inference. Larger = faster GPU utilisation. Default: 32.",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=4,
+        help="DataLoader worker processes for prefetching chips. Default: 4.",
+    )
 
     return parser.parse_args()
 
@@ -338,7 +422,14 @@ def main():
 
     # 3. Predict
     print("Starting inference...")
-    pred_files = predict_chips(model, args.input_dir, temp_dir, device)
+    pred_files = predict_chips(
+        model,
+        args.input_dir,
+        temp_dir,
+        device,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+    )
 
     if not pred_files:
         print("No predictions generated. Exiting.")
