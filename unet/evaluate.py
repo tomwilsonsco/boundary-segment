@@ -7,6 +7,8 @@ import segmentation_models_pytorch as smp
 import albumentations as albu
 from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm
+from torch.utils.data import DataLoader, Dataset
+import multiprocessing
 from datetime import datetime
 import argparse
 from pathlib import Path
@@ -42,6 +44,84 @@ def get_preprocessing():
             ToTensorV2(),
         ]
     )
+
+
+class FieldTestDataset(Dataset):
+    def __init__(self, img_dir, mask_dir, transform=None):
+        self.img_dir = Path(img_dir)
+        self.mask_dir = Path(mask_dir)
+        self.transform = transform
+        self.image_names = [
+            f.name
+            for f in self.img_dir.iterdir()
+            if f.suffix == ".tif" and (self.mask_dir / f.name).exists()
+        ]
+
+    def __len__(self):
+        return len(self.image_names)
+
+    def __getitem__(self, idx):
+        image_name = self.image_names[idx]
+        image_path = self.img_dir / image_name
+        mask_path = self.mask_dir / image_name
+
+        with suppress_stderr():
+            image = cv2.imread(str(image_path))
+            mask = cv2.imread(str(mask_path), 0)
+
+        if image is None:
+            print(f"\n[CRITICAL ERROR] Could not read IMAGE at: {image_path}")
+            print(
+                f"File size: {image_path.stat().st_size if image_path.exists() else 'Missing'} bytes"
+            )
+            raise ValueError(f"Corrupt file found: {image_path}")
+
+        if mask is None:
+            print(f"\n[CRITICAL ERROR] Could not read MASK at: {mask_path}")
+            print(
+                f"File size: {mask_path.stat().st_size if mask_path.exists() else 'Missing'} bytes"
+            )
+            raise ValueError(f"Corrupt file found: {mask_path}")
+
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        mask = (mask > 0).astype(np.float32)
+
+        if self.transform:
+            augmented = self.transform(image=image, mask=mask)
+            image = augmented["image"]
+            mask = augmented["mask"]
+
+        return image, mask
+
+
+def predict_batch(model, images, device, use_tta=False):
+    """
+    Run inference on a batch of images (supports TTA).
+    Args:
+        images: Tensor of shape (B, C, H, W)
+    Returns:
+        Numpy array of probabilities (B, H, W)
+    """
+    if not use_tta:
+        with torch.no_grad():
+            logits = model(images)
+            probs = torch.sigmoid(logits)
+            return probs.squeeze(1).cpu().numpy()
+
+    # Test Time Augmentation (Batch version)
+    with torch.no_grad():
+        probs_sum = 0
+        for k in range(4):
+            # Rotate batch by k*90 degrees
+            imgs_rot = torch.rot90(images, k, [2, 3])
+            logits = model(imgs_rot)
+            probs = torch.sigmoid(logits)
+            # Un-rotate probabilities
+            probs_unrot = torch.rot90(probs, -k, [2, 3])
+            probs_sum += probs_unrot
+        
+        mean_probs = probs_sum / 4.0
+        return mean_probs.squeeze(1).cpu().numpy()
 
 
 def calculate_iou(pred, target, threshold=0.5):
@@ -138,35 +218,6 @@ def load_model(model_path, device):
     return model, encoder_name
 
 
-def predict_image(model, image, transform, device, use_tta=False):
-    """
-    Run inference on a single image (supports TTA).
-    """
-    augmented = transform(image=image)
-    img_tensor = augmented["image"].to(device)
-
-    if use_tta:
-        imgs = [torch.rot90(img_tensor, k, (1, 2)) for k in range(4)]
-        batch = torch.stack(imgs)
-
-        with torch.no_grad():
-            logits = model(batch)
-            probs = torch.sigmoid(logits)
-
-            probs_unrotated = [torch.rot90(probs[k], 4 - k, (1, 2)) for k in range(4)]
-
-            mean_prob = torch.stack(probs_unrotated).mean(dim=0)
-            pred = mean_prob.squeeze().cpu().numpy()
-
-    else:
-        img_tensor = img_tensor.unsqueeze(0)
-        with torch.no_grad():
-            logits = model(img_tensor)
-            pred = torch.sigmoid(logits).squeeze().cpu().numpy()
-
-    return pred
-
-
 def parse_arguments(args=None):
     """Set up and parse command line arguments."""
     parser = argparse.ArgumentParser(description="Evaluate Segmentation Model")
@@ -199,6 +250,18 @@ def parse_arguments(args=None):
         action="store_true",
         help="Enable Test Time Augmentation (4x rotations). "
         "Slower. Testing both with / without gives indication if beneficial prediction time.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Batch size for inference. Larger = faster GPU utilisation. Default: 32.",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=4,
+        help="DataLoader worker processes for prefetching chips. Default: 4.",
     )
 
     return parser.parse_args(args)
@@ -242,63 +305,44 @@ def main(args):
     if not args.model.exists():
         print(f"Error: Model checkpoint not found: {args.model}")
         return
-
+    
     print(f"Loading model from {args.model}...")
     model, encoder_name = load_model(args.model, DEVICE)
 
-    print(f"Loading test images from {test_img_dir}...")
-    test_images = [
-        f.name
-        for f in test_img_dir.iterdir()
-        if f.suffix == ".tif" and (test_mask_dir / f.name).exists()
-    ]
+    test_dataset = FieldTestDataset(test_img_dir, test_mask_dir, transform=get_preprocessing())
 
-    if len(test_images) == 0:
-        print("Error: No test images found!")
-        return
+    num_workers = min(multiprocessing.cpu_count(), args.num_workers)
+    if args.num_workers > multiprocessing.cpu_count():
+        print(f"Reducing num-workers to {num_workers} (available cores)")
 
-    print(f"Found {len(test_images)} test images.")
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=True,
+    )
 
-    transform = get_preprocessing()
+    print(f"Found {len(test_dataset)} test images.")
 
     iou_scores = []
     dice_scores = []
 
     print(f"Evaluating model on test set (TTA={args.tta})...")
-    for img_name in tqdm(test_images, desc="Processing test images"):
-        # load image
-        img_path = test_img_dir / img_name
-        # load mask
-        mask_path = test_mask_dir / img_name
+    for images, masks in tqdm(test_loader, desc="Processing test images"):
+        images = images.to(DEVICE, non_blocking=True)
+        # Predict on batch
+        preds = predict_batch(model, images, DEVICE, use_tta=args.tta)
+        
+        # Iterate over batch to calculate metrics
+        masks_np = masks.numpy()
 
-        with suppress_stderr():
-            image = cv2.imread(str(img_path))
-            mask = cv2.imread(str(mask_path), 0)
-
-        if image is None:
-            print(f"\n[CRITICAL ERROR] Could not read IMAGE at: {img_path}")
-            print(
-                f"File size: {img_path.stat().st_size if img_path.exists() else 'Missing'} bytes"
-            )
-            raise ValueError(f"Corrupt file found: {img_path}")
-
-        if mask is None:
-            print(f"\n[CRITICAL ERROR] Could not read MASK at: {mask_path}")
-            print(
-                f"File size: {mask_path.stat().st_size if mask_path.exists() else 'Missing'} bytes"
-            )
-            raise ValueError(f"Corrupt file found: {mask_path}")
-
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        mask = (mask > 0).astype(np.float32)
-
-        pred = predict_image(model, image, transform, DEVICE, use_tta=args.tta)
-
-        iou = calculate_iou(pred, mask)
-        dice = calculate_dice(pred, mask)
-
-        iou_scores.append(iou)
-        dice_scores.append(dice)
+        for i in range(len(preds)):
+            iou = calculate_iou(preds[i], masks_np[i])
+            dice = calculate_dice(preds[i], masks_np[i])
+            iou_scores.append(iou)
+            dice_scores.append(dice)
 
     # convert to numpy arrays
     iou_scores = np.array(iou_scores)
@@ -314,7 +358,7 @@ def main(args):
     results_text.append(f"Model: {model_name}")
     results_text.append(f"Encoder: {encoder_name}")
     results_text.append(f"TTA (Test Time Augmentation): {tta_status}")
-    results_text.append(f"Total test images: {len(test_images)}")
+    results_text.append(f"Total test images: {len(test_dataset)}")
     results_text.append("")
     results_text.append("IoU Scores:")
     results_text.append(f"  Mean:   {iou_scores.mean():.4f}")
@@ -346,4 +390,7 @@ def main(args):
 
 if __name__ == "__main__":
     parsed_args = parse_arguments()
+
+    
+
     main(parsed_args)
