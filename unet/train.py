@@ -206,6 +206,19 @@ def parse_arguments(args=None):
         default=None,
         help="Optional path to checkpoint to resume from.",
     )
+    parser.add_argument(
+        "--no-compile",
+        dest="compile",
+        action="store_false",
+        help="Disable torch.compile. Enabled by default for faster training on CUDA.",
+    )
+    parser.set_defaults(compile=True)
+    parser.add_argument(
+        "--bf16",
+        action="store_true",
+        default=False,
+        help="Use BF16 mixed precision instead of FP16. Recommended for Ada/Ampere+ GPUs.",
+    )
 
     return parser.parse_args(args)
 
@@ -215,7 +228,9 @@ def main(args):
 
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = True
+        torch.set_float32_matmul_precision("high")
         print("cuDNN benchmarking enabled")
+        print("TF32 matmul precision enabled")
 
     # ensure output directory exists
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -310,6 +325,11 @@ def main(args):
     print(f"Using {args.arch} architecture with {args.encoder} encoder")
     model.to(DEVICE)
 
+    if args.compile and DEVICE == "cuda":
+        print("Compiling model with torch.compile (default mode)...")
+        model = torch.compile(model, mode="default")
+        print("Model compiled.")
+
     dice_loss = smp.losses.DiceLoss(mode="binary", from_logits=True)
     focal_loss = smp.losses.FocalLoss(mode="binary", alpha=0.75, gamma=2.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
@@ -373,10 +393,17 @@ def main(args):
 
     # use_amp only if using gpu
     use_amp = DEVICE == "cuda"
-    scaler = GradScaler(enabled=use_amp)
-    if use_amp:
+    if use_amp and args.bf16:
+        amp_dtype = torch.bfloat16
+        scaler = GradScaler(enabled=False)
+        print("Mixed precision training enabled (BF16)")
+    elif use_amp:
+        amp_dtype = torch.float16
+        scaler = GradScaler(enabled=True)
         print("Mixed precision training enabled (FP16)")
     else:
+        amp_dtype = torch.float32
+        scaler = GradScaler(enabled=False)
         print("Training with FP32 (CPU mode)")
 
     if args.accum_steps > 1:
@@ -398,7 +425,7 @@ def main(args):
             )  # non_blocking with pin_memory
             masks = masks.to(DEVICE, non_blocking=True)
 
-            with autocast(DEVICE, enabled=use_amp):
+            with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
                 logits = model(images)
                 loss = dice_loss(logits, masks) + focal_loss(logits, masks)
                 loss = loss / args.accum_steps
@@ -420,16 +447,19 @@ def main(args):
         model.eval()
         val_loss = 0
 
+        val_loop = tqdm(val_loader, desc=f"Epoch {epoch+1}/{args.epochs} [Val]")
         with torch.no_grad():
-            for images, masks in val_loader:
+            for images, masks in val_loop:
                 images = images.to(DEVICE, non_blocking=True)
                 masks = masks.to(DEVICE, non_blocking=True)
 
                 # mixed precision validation
-                with autocast(DEVICE, enabled=use_amp):
+                with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
                     logits = model(images)
                     loss = dice_loss(logits, masks) + focal_loss(logits, masks)
+
                 val_loss += loss.item()
+                val_loop.set_postfix(loss=loss.item())
 
         avg_val_loss = val_loss / len(val_loader)
 
