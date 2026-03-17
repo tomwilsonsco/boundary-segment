@@ -80,6 +80,13 @@ def load_model(model_path, device):
             f"Architecture or Encoder not found in checkpoint. Arch: {arch_name}, Encoder: {encoder_name}"
         )
 
+    # remove '_orig_mod.' prefix if model was trained with torch.compile
+    clean_state_dict = {}
+    for k, v in state_dict.items():
+        new_k = k.replace("_orig_mod.", "") if k.startswith("_orig_mod.") else k
+        clean_state_dict[new_k] = v
+    state_dict = clean_state_dict
+
     print(f"Architecture: {arch_name}")
     print(f"Encoder: {encoder_name}")
 
