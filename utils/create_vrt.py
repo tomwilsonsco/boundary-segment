@@ -5,7 +5,9 @@ import argparse
 
 def parse_arguments(args=None):
     """Parse user arguments using argparse"""
-    parser = argparse.ArgumentParser(description="Create a VRT mosaic from image files.")
+    parser = argparse.ArgumentParser(
+        description="Create a VRT mosaic from image files."
+    )
     parser.add_argument(
         "--img-dir",
         type=Path,
@@ -48,12 +50,13 @@ def main(args):
 
     try:
         options = gdal.BuildVRTOptions(
-            resolution="highest", resampleAlg=gdal.GRA_NearestNeighbour
+            resolution="highest",
+            resampleAlg=gdal.GRA_NearestNeighbour,
+            outputSRS=target_crs,
         )
         ds = gdal.BuildVRT(
-            str(output_vrt), [str(f) for f in tiff_files], options=options
+            str(output_vrt), [str(f) for f in image_files], options=options
         )
-        ds.SetSRS(target_crs)
         # Release the dataset so that the VRT is closed
         ds = None
         print("VRT file created successfully!")
