@@ -5,19 +5,66 @@ import multiprocessing
 from functools import partial
 import geopandas as gpd
 from tqdm import tqdm
-from rschip import SegmentationMask
+import rasterio
+from rasterio import features
+import numpy as np
+from scipy.ndimage import distance_transform_edt
 
 
-def process_mask_creation(chip_path, out_dir, features_path):
+def process_mask_creation(chip_path, out_dir, features_path, buffer_size):
     """Worker function to create a single mask."""
     try:
+        with rasterio.open(chip_path) as src:
+            transform = src.transform
+            crs = src.crs
+            width = src.width
+            height = src.height
+            chip_bounds = src.bounds
+            pixel_size = abs(transform.a)
+
+        # Read only intersecting features to save computation
+        lines_gdf = gpd.read_file(features_path, bbox=tuple(chip_bounds))
+        
+        # Maximum distance in pixels for the gradient decay
+        max_dist_pixels = buffer_size / pixel_size
+
+        if lines_gdf.empty:
+            gradient_mask = np.zeros((height, width), dtype=np.float32)
+        else:
+            geometries = lines_gdf.geometry.tolist()
+            rasterized = features.rasterize(
+                geometries,
+                out_shape=(height, width),
+                transform=transform,
+                fill=1,
+                default_value=0,
+                dtype=np.uint8
+            )
+            
+            if np.all(rasterized == 1):
+                # Fallback if lines intersected bbox but didn't touch the pixel grid
+                gradient_mask = np.zeros((height, width), dtype=np.float32)
+            else:
+                distance = distance_transform_edt(rasterized)
+                clipped_distance = np.clip(distance, 0, max_dist_pixels)
+                gradient_mask = 1.0 - (clipped_distance / max_dist_pixels)
+                gradient_mask = gradient_mask.astype(np.float32)
+
         out_path = out_dir / chip_path.name
-        mask = SegmentationMask(
-            input_image_path=chip_path,
-            input_features_path=features_path,
-            output_path=out_path,
-        )
-        mask.create_mask(silent=True)
+        profile = {
+            'driver': 'GTiff',
+            'height': height,
+            'width': width,
+            'count': 1,
+            'dtype': 'float32',
+            'crs': crs,
+            'transform': transform,
+            'compress': 'lzw'
+        }
+        
+        with rasterio.open(out_path, 'w', **profile) as dst:
+            dst.write(gradient_mask, 1)
+            
         return True
     except Exception as e:
         print(f"Error processing {chip_path.name}: {e}")
@@ -81,13 +128,8 @@ def main(args):
     print("Dissolving geometry (this may take a moment)...")
     lines = lines.explode(index_parts=True).union_all()
 
-    print(f"Buffering lines by {args.buffer_size}m...")
-    buffered_geom = lines.buffer(args.buffer_size)
-
-    buffer_gdf = gpd.GeoDataFrame(geometry=[buffered_geom], crs=gdf.crs)
-
-    # needed for rschip.SegmentationMask
-    buffer_gdf["ml_class"] = 1
+    # Store the 1D lines without buffering
+    line_gdf = gpd.GeoDataFrame(geometry=[lines], crs=gdf.crs)
 
     chip_paths = list(chip_dir.glob("*.tif"))
     print(f"Processing {len(chip_paths)} chips...")
@@ -98,7 +140,7 @@ def main(args):
 
     success_count = 0
     try:
-        buffer_gdf.to_file(temp_gpkg_path, driver="GPKG")
+        line_gdf.to_file(temp_gpkg_path, driver="GPKG")
 
         if not args.singleprocessor:
             # use available cores - 1
@@ -106,7 +148,7 @@ def main(args):
             print(f"Using {num_workers} workers for processing.")
 
             func = partial(
-                process_mask_creation, out_dir=out_dir, features_path=temp_gpkg_path
+                process_mask_creation, out_dir=out_dir, features_path=temp_gpkg_path, buffer_size=args.buffer_size
             )
 
             with multiprocessing.Pool(num_workers) as pool:
@@ -121,7 +163,7 @@ def main(args):
         else:
             print("Using single process.")
             for chip_path in tqdm(chip_paths, desc="Generating masks"):
-                if process_mask_creation(chip_path, out_dir, temp_gpkg_path):
+                if process_mask_creation(chip_path, out_dir, temp_gpkg_path, args.buffer_size):
                     success_count += 1
     finally:
         # clean up the temporary file

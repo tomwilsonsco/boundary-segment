@@ -2,6 +2,7 @@ import os
 from contextlib import contextmanager
 import torch
 import cv2
+import tifffile as tiff
 import numpy as np
 import segmentation_models_pytorch as smp
 import albumentations as albu
@@ -20,20 +21,25 @@ def suppress_stderr():
     suppress C-level stderr output (like libtiff warnings).
     This redirects the file descriptor 2 (stderr) to /dev/null temporarily.
     """
+    setup_success = False
     try:
         null_fd = os.open(os.devnull, os.O_RDWR)
         save_fd = os.dup(2)
         os.dup2(null_fd, 2)
-        yield
+        setup_success = True
     except Exception:
+        pass
+
+    try:
         yield
     finally:
-        try:
-            os.dup2(save_fd, 2)
-            os.close(null_fd)
-            os.close(save_fd)
-        except Exception:
-            pass
+        if setup_success:
+            try:
+                os.dup2(save_fd, 2)
+                os.close(null_fd)
+                os.close(save_fd)
+            except Exception:
+                pass
 
 
 def get_preprocessing():
@@ -67,7 +73,7 @@ class FieldTestDataset(Dataset):
 
         with suppress_stderr():
             image = cv2.imread(str(image_path))
-            mask = cv2.imread(str(mask_path), 0)
+            mask = tiff.imread(str(mask_path))
 
         if image is None:
             print(f"\n[CRITICAL ERROR] Could not read IMAGE at: {image_path}")
@@ -84,7 +90,6 @@ class FieldTestDataset(Dataset):
             raise ValueError(f"Corrupt file found: {mask_path}")
 
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        mask = (mask > 0).astype(np.float32)
 
         if self.transform:
             augmented = self.transform(image=image, mask=mask)
@@ -104,8 +109,7 @@ def predict_batch(model, images, device, use_tta=False):
     """
     if not use_tta:
         with torch.no_grad():
-            logits = model(images)
-            probs = torch.sigmoid(logits)
+            probs = model(images)
             return probs.squeeze(1).cpu().numpy()
 
     # Test Time Augmentation (Batch version)
@@ -114,8 +118,7 @@ def predict_batch(model, images, device, use_tta=False):
         for k in range(4):
             # Rotate batch by k*90 degrees
             imgs_rot = torch.rot90(images, k, [2, 3])
-            logits = model(imgs_rot)
-            probs = torch.sigmoid(logits)
+            probs = model(imgs_rot)
             # Un-rotate probabilities
             probs_unrot = torch.rot90(probs, -k, [2, 3])
             probs_sum += probs_unrot
@@ -127,7 +130,7 @@ def predict_batch(model, images, device, use_tta=False):
 def calculate_iou(pred, target, threshold=0.5):
     """Calculate Intersection over Union (IoU) score."""
     pred_binary = (pred > threshold).astype(np.uint8)
-    target_binary = (target > 0).astype(np.uint8)
+    target_binary = (target >= threshold).astype(np.uint8)
 
     intersection = np.logical_and(pred_binary, target_binary).sum()
     union = np.logical_or(pred_binary, target_binary).sum()
@@ -141,7 +144,7 @@ def calculate_iou(pred, target, threshold=0.5):
 def calculate_dice(pred, target, threshold=0.5):
     """Calculate Dice coefficient (F1 score)."""
     pred_binary = (pred > threshold).astype(np.uint8)
-    target_binary = (target > 0).astype(np.uint8)
+    target_binary = (target >= threshold).astype(np.uint8)
 
     intersection = np.logical_and(pred_binary, target_binary).sum()
 
@@ -152,6 +155,11 @@ def calculate_dice(pred, target, threshold=0.5):
         return 1.0 if intersection == 0 else 0.0
 
     return (2 * intersection) / (pred_sum + target_sum)
+
+
+def calculate_mae(pred, target):
+    """Calculate Mean Absolute Error (MAE) for regression."""
+    return np.mean(np.abs(pred - target))
 
 
 def load_model(model_path, device):
@@ -197,7 +205,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation=None,
+            activation="sigmoid",
         )
     elif arch_name == "deeplabv3plus":
         model = smp.DeepLabV3Plus(
@@ -205,7 +213,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation=None,
+            activation="sigmoid",
         )
     elif arch_name == "unet":
         model = smp.Unet(
@@ -213,7 +221,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation=None,
+            activation="sigmoid",
         )
     elif arch_name == "fpn":
         model = smp.FPN(
@@ -221,7 +229,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation=None,
+            activation="sigmoid",
         )
     else:
         raise ValueError(f"Unsupported architecture: {arch_name}")
@@ -345,6 +353,7 @@ def main(args):
 
     iou_scores = []
     dice_scores = []
+    mae_scores = []
 
     print(f"Evaluating model on test set (TTA={args.tta})...")
     for images, masks in tqdm(test_loader, desc="Processing test images"):
@@ -358,12 +367,15 @@ def main(args):
         for i in range(len(preds)):
             iou = calculate_iou(preds[i], masks_np[i])
             dice = calculate_dice(preds[i], masks_np[i])
+            mae = calculate_mae(preds[i], masks_np[i])
             iou_scores.append(iou)
             dice_scores.append(dice)
+            mae_scores.append(mae)
 
     # convert to numpy arrays
     iou_scores = np.array(iou_scores)
     dice_scores = np.array(dice_scores)
+    mae_scores = np.array(mae_scores)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     model_name = args.model.name
     tta_status = "Enabled" if args.tta else "Disabled"
@@ -390,6 +402,13 @@ def main(args):
     results_text.append(f"  Min:    {dice_scores.min():.4f}")
     results_text.append(f"  Max:    {dice_scores.max():.4f}")
     results_text.append(f"  Std:    {dice_scores.std():.4f}")
+    results_text.append("")
+    results_text.append("MAE Scores (Distance Gradient):")
+    results_text.append(f"  Mean:   {mae_scores.mean():.4f}")
+    results_text.append(f"  Median: {np.median(mae_scores):.4f}")
+    results_text.append(f"  Min:    {mae_scores.min():.4f}")
+    results_text.append(f"  Max:    {mae_scores.max():.4f}")
+    results_text.append(f"  Std:    {mae_scores.std():.4f}")
     results_text.append("=" * 60)
     results_text.append("")
 
@@ -402,7 +421,7 @@ def main(args):
     print(f"Results appended to {log_file}")
     print("=" * 60)
 
-    return iou_scores, dice_scores
+    return iou_scores, dice_scores, mae_scores
 
 
 if __name__ == "__main__":

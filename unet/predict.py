@@ -29,20 +29,25 @@ def suppress_stderr():
     """
     Suppress C-level stderr output (like libtiff warnings).
     """
+    setup_success = False
     try:
         null_fd = os.open(os.devnull, os.O_RDWR)
         save_fd = os.dup(2)
         os.dup2(null_fd, 2)
-        yield
+        setup_success = True
     except Exception:
+        pass
+
+    try:
         yield
     finally:
-        try:
-            os.dup2(save_fd, 2)
-            os.close(null_fd)
-            os.close(save_fd)
-        except Exception:
-            pass
+        if setup_success:
+            try:
+                os.dup2(save_fd, 2)
+                os.close(null_fd)
+                os.close(save_fd)
+            except Exception:
+                pass
 
 
 def get_preprocessing():
@@ -96,7 +101,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation=None,
+            activation="sigmoid",
         )
     elif arch_name == "deeplabv3plus":
         model = smp.DeepLabV3Plus(
@@ -104,7 +109,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation=None,
+            activation="sigmoid",
         )
     elif arch_name == "unet":
         model = smp.Unet(
@@ -112,7 +117,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation=None,
+            activation="sigmoid",
         )
     elif arch_name == "fpn":
         model = smp.FPN(
@@ -120,7 +125,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation=None,
+            activation="sigmoid",
         )
     else:
         raise ValueError(f"Unsupported architecture: {arch_name}")
@@ -261,8 +266,8 @@ def predict_chips(model, input_dir, temp_dir, device, batch_size=32, num_workers
             img_tensors = img_tensors.to(device, non_blocking=True)
 
             with torch.amp.autocast(device, enabled=use_amp):
-                logits = model(img_tensors)
-                prob_maps = torch.sigmoid(logits).squeeze(1).cpu().numpy()
+                preds = model(img_tensors)
+                prob_maps = preds.squeeze(1).cpu().numpy()
                 # squeeze(1): (B,1,H,W) -> (B,H,W)
 
             # Iterate through batch
@@ -293,7 +298,7 @@ def build_vrt(vrt_path, input_files):
     print(f"Building VRT from {len(input_files)} files...")
     try:
         options = gdal.BuildVRTOptions(
-            resampleAlg=gdal.GRA_NearestNeighbour, resolution="highest"
+            resampleAlg=gdal.GRA_Bilinear, resolution="highest"
         )
         input_strs = [str(f) for f in input_files]
         gdal.BuildVRT(str(vrt_path), input_strs, options=options)
@@ -434,7 +439,7 @@ def parse_arguments():
         "--threshold",
         type=float,
         default=0.5,
-        help="Probability threshold for binary mask. Default: 0.5",
+        help="Gradient cutoff to form the boundary zone before skeletonization (e.g., 0.5 isolates pixels the model thinks are within ~0.5m of the centerline). Default: 0.5",
     )
     parser.add_argument(
         "--chunk-size",

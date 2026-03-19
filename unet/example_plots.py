@@ -20,20 +20,25 @@ def suppress_stderr():
     """
     Suppress C-level stderr output (like libtiff warnings).
     """
+    setup_success = False
     try:
         null_fd = os.open(os.devnull, os.O_RDWR)
         save_fd = os.dup(2)
         os.dup2(null_fd, 2)
-        yield
+        setup_success = True
     except Exception:
+        pass
+
+    try:
         yield
     finally:
-        try:
-            os.dup2(save_fd, 2)
-            os.close(null_fd)
-            os.close(save_fd)
-        except Exception:
-            pass
+        if setup_success:
+            try:
+                os.dup2(save_fd, 2)
+                os.close(null_fd)
+                os.close(save_fd)
+            except Exception:
+                pass
 
 
 def setup_directories(test_chips_dir, screenshot_output_dir):

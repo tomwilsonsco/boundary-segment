@@ -2,6 +2,7 @@ import os
 import torch
 from torch.utils.data import DataLoader, Dataset
 import cv2
+import tifffile as tiff
 import segmentation_models_pytorch as smp
 import albumentations as albu
 from albumentations.pytorch import ToTensorV2
@@ -20,20 +21,25 @@ def suppress_stderr():
     Low-level context manager to suppress C-level stderr output (like libtiff warnings).
     This redirects the file descriptor 2 (stderr) to /dev/null temporarily.
     """
+    setup_success = False
     try:
         null_fd = os.open(os.devnull, os.O_RDWR)
         save_fd = os.dup(2)
         os.dup2(null_fd, 2)
-        yield
+        setup_success = True
     except Exception:
+        pass
+
+    try:
         yield
     finally:
-        try:
-            os.dup2(save_fd, 2)
-            os.close(null_fd)
-            os.close(save_fd)
-        except Exception:
-            pass
+        if setup_success:
+            try:
+                os.dup2(save_fd, 2)
+                os.close(null_fd)
+                os.close(save_fd)
+            except Exception:
+                pass
 
 
 class FieldDataset(Dataset):
@@ -54,7 +60,7 @@ class FieldDataset(Dataset):
 
         with suppress_stderr():
             image = cv2.imread(str(img_path))
-            mask = cv2.imread(str(mask_path), 0)
+            mask = tiff.imread(str(mask_path))
 
         if image is None:
             print(f"\n[CRITICAL ERROR] Could not read IMAGE at: {img_path}")
@@ -68,7 +74,6 @@ class FieldDataset(Dataset):
             raise ValueError(f"Corrupt file found: {mask_path}")
 
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        mask[mask > 0] = 1.0
 
         if self.transform:
             augmented = self.transform(image=image, mask=mask)
@@ -109,6 +114,22 @@ def get_validation_augmentation():
             ToTensorV2(),
         ]
     )
+
+
+def weighted_l1_loss(predictions, targets, pos_weight=10.0):
+    """
+    Calculates L1 loss but applies a multiplier to regions 
+    where the ground truth boundary gradient exists.
+    """
+    # Calculate standard absolute error per pixel
+    l1_error = torch.abs(predictions - targets)
+    
+    # Create a weight mask: e.g., multiply error by 10 in boundary zones, 1 in background
+    weights = torch.where(targets > 0, pos_weight, 1.0)
+    
+    # Apply weights and return the mean
+    weighted_error = l1_error * weights
+    return weighted_error.mean()
 
 
 def parse_arguments(args=None):
@@ -308,7 +329,7 @@ def main(args):
         "encoder_weights": args.weights,
         "in_channels": 3,
         "classes": 1,
-        "activation": None,
+        "activation": "sigmoid",
     }
 
     if args.arch == "unet":
@@ -332,8 +353,6 @@ def main(args):
         model = torch.compile(model, mode="default")
         print("Model compiled.")
 
-    dice_loss = smp.losses.DiceLoss(mode="binary", from_logits=True)
-    focal_loss = smp.losses.FocalLoss(mode="binary", alpha=0.75, gamma=2.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
 
     # Add learning rate scheduler
@@ -428,8 +447,8 @@ def main(args):
             masks = masks.to(DEVICE, non_blocking=True)
 
             with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
-                logits = model(images)
-                loss = dice_loss(logits, masks) + focal_loss(logits, masks)
+                predictions = model(images)
+                loss = weighted_l1_loss(predictions, masks, pos_weight=10.0)
                 loss = loss / args.accum_steps
 
             scaler.scale(loss).backward()
@@ -457,8 +476,8 @@ def main(args):
 
                 # mixed precision validation
                 with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
-                    logits = model(images)
-                    loss = dice_loss(logits, masks) + focal_loss(logits, masks)
+                    predictions = model(images)
+                    loss = weighted_l1_loss(predictions, masks, pos_weight=10.0)
 
                 val_loss += loss.item()
                 val_loop.set_postfix(loss=loss.item())
