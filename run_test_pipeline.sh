@@ -6,6 +6,7 @@ set -euo pipefail
 
 # adjust to relative paths
 SOURCE_IMAGES_DIR="inputs/images/gretna/12.5cm Aerial Photo"
+NIR_IMAGES_DIR="inputs/images/gretna/50cm Colour Infrared"
 PARCELS_GPKG="inputs/gretna_parcels.gpkg"
 
 # output locations
@@ -39,6 +40,22 @@ python utils/assign_crs_to_images.py \
     --output-subdir "tiff_with_crs" \
     --target-crs "EPSG:27700"
 
+# ##########################
+# # NIR process
+# # A. Assign CRS to NIR and convert to Tiff
+# # echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 1] Assigning CRS and converting JPEGs to TIFF..."
+# # python utils/assign_crs_to_images.py \
+# #     --img-dir "${NIR_IMAGES_DIR}" \
+# #     --output-subdir "tiff_with_crs" \
+# #     --target-crs "EPSG:27700"
+
+# # B. Add NIR band
+# echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 2] Adding NIR band..."
+# python utils/add_nir.py \
+#     --target-dir "${TIFF_DIR}" \
+#     --source-nir-dir "${NIR_IMAGES_DIR}/tiff_with_crs"
+# # ##########################
+
 # 2. Create VRT
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 3] Creating VRT mosaic..."
 python utils/create_vrt.py \
@@ -60,7 +77,8 @@ python utils/chip_image.py \
     --chip-size 512 \
     --chip-offset 384 \
     --resampling-factor 0.5 \
-    --overwrite-output-dir
+    --overwrite-output-dir \
+    --sample-scaler
 
 # 4. Create Masks
 # Creates binary masks in ${CHIPS_DIR}/masks
@@ -79,7 +97,6 @@ python unet/split_dataset_train_test.py \
     --train-ratio 0.7 --val-ratio 0.2 --test-ratio 0.1
 
 # 6. Train Model
-# Using efficientnet-b0 and 1 epoch for speed
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 7] Training model..."
 python unet/train.py \
     --dataset-dir "${DATASET_DIR}" \
@@ -92,13 +109,28 @@ python unet/train.py \
     --desc "${EXP_NAME}" \
     --bf16
 
+# # 6. Train Model
+# # Using efficientnet-b0 and 1 epoch for speed
+# echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 7] Training model..."
+# python unet/train_nir.py \
+#     --dataset-dir "${DATASET_DIR}" \
+#     --scaler-path "${CHIPS_DIR}/scaler.json" \
+#     --arch unetplusplus \
+#     --encoder efficientnet-b0 \
+#     --epochs 10 \
+#     --batch-size 8 \
+#     --num-workers 8 \
+#     --output-dir "${MODEL_DIR}" \
+#     --desc "${EXP_NAME}" \
+#     --bf16
+
 # # Detect the trained model path (ignoring the checkpoint file)
 MODEL_PATH=$(ls -t "${MODEL_DIR}"/*_${EXP_NAME}_*.pth | grep -v "checkpoint" | head -n1)
 echo "Using trained model: ${MODEL_PATH}"
 
 # 7. Evaluate
-# echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 8] Evaluating model..."
-python unet/evaluate.py \
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 8] Evaluating model..."
+python unet/evaluate_nir.py \
     --dataset-dir "${DATASET_DIR}" \
    --model "${MODEL_PATH}" \
    --batch-size 4 \
@@ -114,7 +146,7 @@ python unet/predict.py \
     --output-dir "${OUTPUT_ROOT}/predictions" \
     --num-workers 8
 
-# 9. Example Plots
+9. Example Plots
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 10] Generating analysis plots..."
 python unet/example_plots.py \
     --dataset-dir "${DATASET_DIR}" \
@@ -125,3 +157,5 @@ python unet/example_plots.py \
     --seed 999
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pipeline test complete. Outputs in ${OUTPUT_ROOT}"
+
+
