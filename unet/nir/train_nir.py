@@ -2,6 +2,8 @@ import os
 import torch
 from torch.utils.data import DataLoader, Dataset
 import cv2
+import tifffile as tiff
+import json
 import segmentation_models_pytorch as smp
 import albumentations as albu
 from albumentations.pytorch import ToTensorV2
@@ -53,7 +55,7 @@ class FieldDataset(Dataset):
         mask_path = self.mask_dir / img_name
 
         with suppress_stderr():
-            image = cv2.imread(str(img_path))
+            image = tiff.imread(str(img_path))
             mask = cv2.imread(str(mask_path), 0)
 
         if image is None:
@@ -67,7 +69,6 @@ class FieldDataset(Dataset):
             print(f"Could not read MASK at: {mask_path}")
             raise ValueError(f"Corrupt file found: {mask_path}")
 
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         mask[mask > 0] = 1.0
 
         if self.transform:
@@ -84,7 +85,7 @@ class FieldDataset(Dataset):
         return len(self.ids)
 
 
-def get_training_augmentation():
+def get_training_augmentation(norm_mean, norm_std):
     return albu.Compose(
         [
             albu.HorizontalFlip(p=0.5),
@@ -94,18 +95,16 @@ def get_training_augmentation():
                 scale=(0.9, 1.1), rotate=(-15, 15), translate_percent=(-0.1, 0.1), p=0.5
             ),
             albu.RandomBrightnessContrast(p=0.2),
-            # imageNet normalization
-            albu.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            albu.Normalize(mean=norm_mean, std=norm_std),
             ToTensorV2(),
         ]
     )
 
 
-def get_validation_augmentation():
+def get_validation_augmentation(norm_mean, norm_std):
     return albu.Compose(
         [
-            # imageNet normalization
-            albu.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            albu.Normalize(mean=norm_mean, std=norm_std),
             ToTensorV2(),
         ]
     )
@@ -122,6 +121,13 @@ def parse_arguments(args=None):
         default=Path("inputs/images/dataset"),
         help="Root dataset directory containing images/ and masks/ subdirs. "
         "Default: inputs/images/dataset.",
+    )
+
+    parser.add_argument(
+        "--scaler-path",
+        type=Path,
+        default=None,
+        help="Path to scaler.json containing mean and std values. Defaults to dataset_dir/scaler.json",
     )
 
     # model
@@ -255,15 +261,38 @@ def main(args):
     print(f"Checkpoint will be saved to: {checkpoint_path}")
     print(f"Loss plot will be saved to: {loss_plot_path}")
 
+    # Load scaler.json
+    scaler_file = (
+        args.scaler_path if args.scaler_path else args.dataset_dir / "scaler.json"
+    )
+    if not scaler_file.exists():
+        raise FileNotFoundError(f"Scaler config not found at: {scaler_file}")
+
+    with open(scaler_file, "r") as f:
+        scaler_data = json.load(f)
+
+    norm_mean = []
+    norm_std = []
+
+    # Extract mean and std for bands 0 to 3, dividing by 255.0 for albu.Normalize
+    for i in range(4):
+        band_key = str(i)
+        if band_key not in scaler_data:
+            raise KeyError(f"Band '{band_key}' missing from scaler.json")
+        norm_mean.append(scaler_data[band_key]["mean"] / 255.0)
+        norm_std.append(scaler_data[band_key]["std"] / 255.0)
+
+    print(f"Loaded normalisation config from {scaler_file}")
+
     train_dataset = FieldDataset(
         args.dataset_dir / "images/train",
         args.dataset_dir / "masks/train",
-        transform=get_training_augmentation(),
+        transform=get_training_augmentation(norm_mean, norm_std),
     )
     val_dataset = FieldDataset(
         args.dataset_dir / "images/val",
         args.dataset_dir / "masks/val",
-        transform=get_validation_augmentation(),
+        transform=get_validation_augmentation(norm_mean, norm_std),
     )
 
     # determine number of workers for DataLoader
@@ -306,7 +335,7 @@ def main(args):
     model_params = {
         "encoder_name": args.encoder,
         "encoder_weights": args.weights,
-        "in_channels": 3,
+        "in_channels": 4,
         "classes": 1,
         "activation": None,
     }

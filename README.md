@@ -64,38 +64,35 @@ The APGB images do not have a CRS and arrive in jpeg format.
 python utils/assign_crs_to_images.py --img-dir "inputs/images/gretna/12.5cm Aerial Photo"
 ```
 
-## 2. Downscale 0.125m per pixel images to 0.25m
-For speed of process / chip tile size management it is recommended to downscale from 0.125 metre per pixel to 0.25.
-```bash
-python utils/downscale.py --img-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs" --output-subdir downscaled_025
-```
-
-## 3. Create a GDAL vrt from the images
+## 2. Create a GDAL vrt from the images
 A GDAL vrt is an XML reference file. It is much quicker to build and takes less disk space than building a mosaic image.
 ```bash
 python utils/create_vrt.py --img-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025"
 ```
 
-## 4. Create chip images from vrt
+## 3. Create chip images from vrt
 Uses the [rs-chip](https://github.com/tomwilsonsco/rs-chip) package.  
 Progress bar takes a while to move from 0 as only moves once whole batch complete. Look at the output dir that chip files are being created if unsure.
+
 ```bash
-python utils/chip_image.py --vrt "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/apgb_imgs.vrt"
+python utils/chip_image.py --vrt "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/apgb_imgs.vrt" --chip-size 512 --chip-offset 384 --resampling-factor 0.5
 ```
 
-## 5. Create masks from land parcel lines
+The `--resampling-factor 0.5` is used in this example to downscale the chips at the point of creation from 0.125 m per pixel in the source imagery to 0.25 m, requiring 4 times fewer chips to cover a given extent. The output chip size (512 in this example) accounts for the downscaling and output chips will be 0.25 m per pixel and 512 by 512 pixels. 
+
+## 4. Create masks from land parcel lines
 This will create an equivalent binary mask tif (1 for lines 0 for background) for each input image.
 ```bash
 python unet/create_masks.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips" --shapefile inputs/gretna_parcels.gpkg
 ```
-## 6. Split the chip images and masks into train, validation, test sets
+## 5. Split the chip images and masks into train, validation, test sets
 The process using `rschip.DatasetSplitter()` will check for and not copy image-mask pairs that are all background (0 class only).
 
 ```bash
 python unet/split_dataset_train_test.py --image-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips" --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips/masks" --output-dir inputs/images/gretna
 ```
 
-## 7. Train model
+## 6. Train model
 Many of these args are the default values but included here for info.
 ```bash
 # to see help on script arguments
@@ -105,7 +102,7 @@ python unet/train.py --help
 python unet/train.py --dataset-dir inputs/images/gretna/dataset --arch unetplusplus --encoder efficientnet-b3 --epochs 30 --batch-size 8 --lr 0.0001 --desc test-025m
 ```
 
-## 8. Evaluate model
+## 7. Evaluate model
 We use the evaluate.py to use trained model to predict from each test set image and then report summary stats on intersect over union (IoU) and dice score.
 
 ```bash
@@ -113,7 +110,7 @@ python unet/evaluate.py --dataset-dir inputs/images/gretna/dataset --model model
 ```
  **Note:**: Although given above, we do not necessarily need to specify the model .pth file as by default it will take the most recent based on date time saved in the .pth file name. The `--model` argument is needed if not testing the most recently available.
 
-## 9. Predict with model
+## 8. Predict with model
 Once a trained model is achieving test set prediction performance you are happy with, you can predict for all chipped images across a continuous extent and produce a geopackage output of the boundary line predictions.
 
 This process takes a while to complete on large extents.
@@ -124,7 +121,7 @@ python unet/predict.py --input-dir "inputs/images/gretna/12.5cm Aerial Photo/tif
 
 As with the evaluate script, predict will use the latest trained model in `models/` unless the `--model` argument is used to specify a different one.
 
-## 10. Plot some prediction examples
+## 9. Plot some prediction examples
 We can create plots as shown below for predictions on the test set of chips. Vary the number of samples and seed values to get different number and selection of plots.
 
 ```bash

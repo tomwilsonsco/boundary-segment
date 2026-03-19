@@ -2,6 +2,8 @@ import os
 from contextlib import contextmanager
 import torch
 import cv2
+import tifffile as tiff
+import json
 import numpy as np
 import segmentation_models_pytorch as smp
 import albumentations as albu
@@ -36,11 +38,11 @@ def suppress_stderr():
             pass
 
 
-def get_preprocessing():
+def get_preprocessing(norm_mean, norm_std):
     """Get preprocessing transforms for inference."""
     return albu.Compose(
         [
-            albu.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            albu.Normalize(mean=norm_mean, std=norm_std),
             ToTensorV2(),
         ]
     )
@@ -66,7 +68,7 @@ class FieldTestDataset(Dataset):
         mask_path = self.mask_dir / image_name
 
         with suppress_stderr():
-            image = cv2.imread(str(image_path))
+            image = tiff.imread(str(image_path))
             mask = cv2.imread(str(mask_path), 0)
 
         if image is None:
@@ -83,7 +85,6 @@ class FieldTestDataset(Dataset):
             )
             raise ValueError(f"Corrupt file found: {mask_path}")
 
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         mask = (mask > 0).astype(np.float32)
 
         if self.transform:
@@ -195,7 +196,7 @@ def load_model(model_path, device):
         model = smp.UnetPlusPlus(
             encoder_name=encoder_name,
             encoder_weights="imagenet",
-            in_channels=3,
+            in_channels=4,
             classes=1,
             activation=None,
         )
@@ -203,7 +204,7 @@ def load_model(model_path, device):
         model = smp.DeepLabV3Plus(
             encoder_name=encoder_name,
             encoder_weights="imagenet",
-            in_channels=3,
+            in_channels=4,
             classes=1,
             activation=None,
         )
@@ -211,7 +212,7 @@ def load_model(model_path, device):
         model = smp.Unet(
             encoder_name=encoder_name,
             encoder_weights="imagenet",
-            in_channels=3,
+            in_channels=4,
             classes=1,
             activation=None,
         )
@@ -219,7 +220,7 @@ def load_model(model_path, device):
         model = smp.FPN(
             encoder_name=encoder_name,
             encoder_weights="imagenet",
-            in_channels=3,
+            in_channels=4,
             classes=1,
             activation=None,
         )
@@ -243,6 +244,13 @@ def parse_arguments(args=None):
         default=Path("inputs/images/dataset"),
         help="Root dataset directory containing images/ and masks/ subdirs. "
         "Default: inputs/images/dataset.",
+    )
+
+    parser.add_argument(
+        "--scaler-path",
+        type=Path,
+        default=None,
+        help="Path to scaler.json containing mean and std values. Defaults to dataset_dir/scaler.json",
     )
 
     parser.add_argument(
@@ -321,11 +329,32 @@ def main(args):
         print(f"Error: Model checkpoint not found: {args.model}")
         return
 
+    # Load scaler.json
+    scaler_file = (
+        args.scaler_path if args.scaler_path else args.dataset_dir / "scaler.json"
+    )
+    if not scaler_file.exists():
+        raise FileNotFoundError(f"Scaler config not found at: {scaler_file}")
+
+    with open(scaler_file, "r") as f:
+        scaler_data = json.load(f)
+
+    norm_mean = []
+    norm_std = []
+
+    # Extract mean and std for bands 0 to 3, dividing by 255.0 for albu.Normalize
+    for i in range(4):
+        band_key = str(i)
+        if band_key not in scaler_data:
+            raise KeyError(f"Band '{band_key}' missing from scaler.json")
+        norm_mean.append(scaler_data[band_key]["mean"] / 255.0)
+        norm_std.append(scaler_data[band_key]["std"] / 255.0)
+
     print(f"Loading model from {args.model}...")
     model, encoder_name = load_model(args.model, DEVICE)
 
     test_dataset = FieldTestDataset(
-        test_img_dir, test_mask_dir, transform=get_preprocessing()
+        test_img_dir, test_mask_dir, transform=get_preprocessing(norm_mean, norm_std)
     )
 
     num_workers = min(multiprocessing.cpu_count(), args.num_workers)

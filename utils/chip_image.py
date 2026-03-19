@@ -7,6 +7,7 @@ import geopandas as gpd
 import shutil
 import argparse
 import sys
+import json
 
 
 def parse_arguments(args=None):
@@ -36,7 +37,13 @@ def parse_arguments(args=None):
         help="How much offset between chips, for example if size 512 and"
         " offset of 384 this means an overlap of 128",
     )
-
+    parser.add_argument(
+        "--resampling-factor",
+        type=float,
+        default=1,
+        help="Whether to resample, e.g downscale chips. Default of 1 will not"
+        "downscale, a value of 0.5 would downscale a 0.125m image to 0.25m",
+    )
     parser.add_argument(
         "--create-index-layer",
         action="store_true",
@@ -47,6 +54,11 @@ def parse_arguments(args=None):
         action="store_true",
         help="Overwrite if output directory already exists. "
         "If not set the process will stop if output directory already exists.",
+    )
+    parser.add_argument(
+        "--sample-scaler",
+        action="store_true",
+        help="Sample the image to compute scaling statistics and save as a JSON file",
     )
     return parser.parse_args(args)
 
@@ -85,6 +97,7 @@ def main(args):
         output_path=out_dir,
         pixel_dimensions=args.chip_size,
         offset=args.chip_offset,
+        scale_factor=args.resampling_factor,
     )
 
     # generate chips
@@ -103,6 +116,11 @@ def main(args):
                 crs = src.crs
             gdf = gpd.GeoDataFrame(geoms, crs=crs)
             gdf.to_file(out_dir / "chips_index.gpkg")
+
+    if args.sample_scaler:
+        scaler = image_chipper.sample_to_scaler(int(1e5))
+        with open(out_dir / "scaler.json", "w") as f:
+            json.dump(scaler, f, indent=4)
 
 
 if __name__ == "__main__":

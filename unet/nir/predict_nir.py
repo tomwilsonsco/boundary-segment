@@ -1,6 +1,7 @@
 import argparse
 import os
 import shutil
+import json
 from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime
@@ -45,11 +46,11 @@ def suppress_stderr():
             pass
 
 
-def get_preprocessing():
+def get_preprocessing(norm_mean, norm_std):
     """Get preprocessing transforms for inference."""
     return albu.Compose(
         [
-            albu.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            albu.Normalize(mean=norm_mean, std=norm_std),
             ToTensorV2(),
         ]
     )
@@ -94,7 +95,7 @@ def load_model(model_path, device):
         model = smp.UnetPlusPlus(
             encoder_name=encoder_name,
             encoder_weights="imagenet",
-            in_channels=3,
+            in_channels=4,
             classes=1,
             activation=None,
         )
@@ -102,7 +103,7 @@ def load_model(model_path, device):
         model = smp.DeepLabV3Plus(
             encoder_name=encoder_name,
             encoder_weights="imagenet",
-            in_channels=3,
+            in_channels=4,
             classes=1,
             activation=None,
         )
@@ -110,7 +111,7 @@ def load_model(model_path, device):
         model = smp.Unet(
             encoder_name=encoder_name,
             encoder_weights="imagenet",
-            in_channels=3,
+            in_channels=4,
             classes=1,
             activation=None,
         )
@@ -118,7 +119,7 @@ def load_model(model_path, device):
         model = smp.FPN(
             encoder_name=encoder_name,
             encoder_weights="imagenet",
-            in_channels=3,
+            in_channels=4,
             classes=1,
             activation=None,
         )
@@ -166,7 +167,7 @@ class ChipInferenceDataset(torch.utils.data.Dataset):
 
         if image is None:
             h, w = 128, 128
-            return torch.zeros(3, h, w), str(chip_path), trans_tuple, crs_str, False
+            return torch.zeros(4, h, w), str(chip_path), trans_tuple, crs_str, False
 
         augmented = self.transform(image=image)
         img_tensor = augmented["image"]  # (C, H, W)
@@ -211,7 +212,16 @@ def _writer_worker(write_queue, input_dir, temp_dir):
         write_queue.task_done()
 
 
-def predict_chips(model, input_dir, temp_dir, device, batch_size=32, num_workers=4):
+def predict_chips(
+    model,
+    input_dir,
+    temp_dir,
+    device,
+    norm_mean,
+    norm_std,
+    batch_size=32,
+    num_workers=4,
+):
     """
     Run batched inference on all chips in input_dir and save to temp_dir.
 
@@ -219,7 +229,7 @@ def predict_chips(model, input_dir, temp_dir, device, batch_size=32, num_workers
         batch_size: Number of chips per GPU forward pass.
         num_workers: CPU workers for DataLoader prefetch.
     """
-    transform = get_preprocessing()
+    transform = get_preprocessing(norm_mean, norm_std)
     chip_files = sorted(input_dir.glob("*.tif"))
 
     if not chip_files:
@@ -414,6 +424,12 @@ def parse_arguments():
         help="Directory containing input chip images (.tif).",
     )
     parser.add_argument(
+        "--scaler-path",
+        type=Path,
+        default=None,
+        help="Path to scaler.json containing mean and std values. Defaults to input-dir/scaler.json",
+    )
+    parser.add_argument(
         "--model",
         type=Path,
         default=None,
@@ -489,17 +505,40 @@ def main():
     temp_dir = args.output_dir / "temp_preds"
     temp_dir.mkdir(exist_ok=True)
 
-    # 2. Load Model
+    # 2. Load scaler.json
+    scaler_file = (
+        args.scaler_path if args.scaler_path else args.input_dir / "scaler.json"
+    )
+    if not scaler_file.exists():
+        raise FileNotFoundError(f"Scaler config not found at: {scaler_file}")
+
+    with open(scaler_file, "r") as f:
+        scaler_data = json.load(f)
+
+    norm_mean = []
+    norm_std = []
+
+    # Extract mean and std for bands 0 to 3, dividing by 255.0 for albu.Normalize
+    for i in range(4):
+        band_key = str(i)
+        if band_key not in scaler_data:
+            raise KeyError(f"Band '{band_key}' missing from scaler.json")
+        norm_mean.append(scaler_data[band_key]["mean"] / 255.0)
+        norm_std.append(scaler_data[band_key]["std"] / 255.0)
+
+    # 3. Load Model
     print(f"Loading model from {args.model}...")
     model = load_model(args.model, device)
 
-    # 3. Predict
+    # 4. Predict
     print("Starting inference...")
     pred_files = predict_chips(
         model,
         args.input_dir,
         temp_dir,
         device,
+        norm_mean,
+        norm_std,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
     )
@@ -508,12 +547,12 @@ def main():
         print("No predictions generated. Exiting.")
         return
 
-    # 4. Stitch (VRT)
+    # 5. Stitch (VRT)
     vrt_path = args.output_dir / "mosaic.vrt"
     if not build_vrt(vrt_path, pred_files):
         return
 
-    # 5. Process VRT -> Skeleton -> Lines
+    # 6. Process VRT -> Skeleton -> Lines
     lines, crs = process_vrt_to_lines(
         vrt_path,
         chunk_size=args.chunk_size,
@@ -521,7 +560,7 @@ def main():
         min_contour_length=args.min_contour_length,
     )
 
-    # 6. Save Output
+    # 7. Save Output
     if lines:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_name = args.model.stem
@@ -534,7 +573,7 @@ def main():
     else:
         print("No lines detected.")
 
-    # 7. Cleanup
+    # 8. Cleanup
     if not args.keep_preds:
         print("Cleaning up temporary files...")
         shutil.rmtree(temp_dir)
