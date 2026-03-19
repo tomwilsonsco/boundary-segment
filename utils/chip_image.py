@@ -7,6 +7,7 @@ import geopandas as gpd
 import shutil
 import argparse
 import sys
+import json
 
 
 def parse_arguments(args=None):
@@ -53,6 +54,11 @@ def parse_arguments(args=None):
         action="store_true",
         help="Overwrite if output directory already exists. "
         "If not set the process will stop if output directory already exists.",
+    )
+    parser.add_argument(
+        "--sample-scaler",
+        action="store_true",
+        help="Sample the image to compute scaling statistics and save as a JSON file",
     )
     return parser.parse_args(args)
 
@@ -110,6 +116,11 @@ def main(args):
                 crs = src.crs
             gdf = gpd.GeoDataFrame(geoms, crs=crs)
             gdf.to_file(out_dir / "chips_index.gpkg")
+
+    if args.sample_scaler:
+        scaler = image_chipper.sample_to_scaler(int(1e5))
+        with open(out_dir / "scaler.json", "w") as f:
+            json.dump(scaler, f, indent=4)
 
 
 if __name__ == "__main__":
