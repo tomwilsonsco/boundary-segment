@@ -80,41 +80,26 @@ python utils/chip_image.py \
     --overwrite-output-dir \
     --sample-scaler
 
-# 4. Create Masks
-# Creates binary masks in ${CHIPS_DIR}/masks
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 5] Creating segmentation masks..."
-python unet/create_masks.py \
-    --chip-dir "${CHIPS_DIR}" \
-    --shapefile "${PARCELS_GPKG}" \
-    --buffer-size 0.75
+# # 4. Create Masks
+# # Creates binary masks in ${CHIPS_DIR}/masks
+# echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 5] Creating segmentation masks..."
+# python unet/create_masks.py \
+#     --chip-dir "${CHIPS_DIR}" \
+#     --shapefile "${PARCELS_GPKG}" \
+#     --buffer-size 0.75
 
-# 5. Split Dataset
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 6] Splitting dataset..."
-python unet/split_dataset_train_test.py \
-    --image-dir "${CHIPS_DIR}" \
-    --mask-dir "${CHIPS_DIR}/masks" \
-    --output-dir "${OUTPUT_ROOT}" \
-    --train-ratio 0.7 --val-ratio 0.2 --test-ratio 0.1
-
-# 6. Train Model
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 7] Training model..."
-python unet/train.py \
-    --dataset-dir "${DATASET_DIR}" \
-    --arch unetplusplus \
-    --encoder efficientnet-b0 \
-    --epochs 10 \
-    --batch-size 8 \
-    --num-workers 8 \
-    --output-dir "${MODEL_DIR}" \
-    --desc "${EXP_NAME}" \
-    --bf16
+# # 5. Split Dataset
+# echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 6] Splitting dataset..."
+# python unet/split_dataset_train_test.py \
+#     --image-dir "${CHIPS_DIR}" \
+#     --mask-dir "${CHIPS_DIR}/masks" \
+#     --output-dir "${OUTPUT_ROOT}" \
+#     --train-ratio 0.7 --val-ratio 0.2 --test-ratio 0.1
 
 # # 6. Train Model
-# # Using efficientnet-b0 and 1 epoch for speed
 # echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 7] Training model..."
-# python unet/train_nir.py \
+# python unet/train.py \
 #     --dataset-dir "${DATASET_DIR}" \
-#     --scaler-path "${CHIPS_DIR}/scaler.json" \
 #     --arch unetplusplus \
 #     --encoder efficientnet-b0 \
 #     --epochs 10 \
@@ -124,38 +109,53 @@ python unet/train.py \
 #     --desc "${EXP_NAME}" \
 #     --bf16
 
-# # Detect the trained model path (ignoring the checkpoint file)
-MODEL_PATH=$(ls -t "${MODEL_DIR}"/*_${EXP_NAME}_*.pth | grep -v "checkpoint" | head -n1)
-echo "Using trained model: ${MODEL_PATH}"
+# # # 6. Train Model
+# # # Using efficientnet-b0 and 1 epoch for speed
+# # echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 7] Training model..."
+# # python unet/train_nir.py \
+# #     --dataset-dir "${DATASET_DIR}" \
+# #     --scaler-path "${CHIPS_DIR}/scaler.json" \
+# #     --arch unetplusplus \
+# #     --encoder efficientnet-b0 \
+# #     --epochs 10 \
+# #     --batch-size 8 \
+# #     --num-workers 8 \
+# #     --output-dir "${MODEL_DIR}" \
+# #     --desc "${EXP_NAME}" \
+# #     --bf16
 
-# 7. Evaluate
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 8] Evaluating model..."
-python unet/evaluate_nir.py \
-    --dataset-dir "${DATASET_DIR}" \
-   --model "${MODEL_PATH}" \
-   --batch-size 4 \
-   --num-workers 8 \
-    --output-dir "${OUTPUT_ROOT}/eval"
+# # # Detect the trained model path (ignoring the checkpoint file)
+# MODEL_PATH=$(ls -t "${MODEL_DIR}"/*_${EXP_NAME}_*.pth | grep -v "checkpoint" | head -n1)
+# echo "Using trained model: ${MODEL_PATH}"
 
-# 8. Predict
-# Predicting on the chips folder generated in Step 4
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 9] Running prediction..."
-python unet/predict.py \
-    --input-dir "${CHIPS_DIR}" \
-    --model "${MODEL_PATH}" \
-    --output-dir "${OUTPUT_ROOT}/predictions" \
-    --num-workers 8
+# # 7. Evaluate
+# echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 8] Evaluating model..."
+# python unet/evaluate_nir.py \
+#     --dataset-dir "${DATASET_DIR}" \
+#    --model "${MODEL_PATH}" \
+#    --batch-size 4 \
+#    --num-workers 8 \
+#     --output-dir "${OUTPUT_ROOT}/eval"
 
-9. Example Plots
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 10] Generating analysis plots..."
-python unet/example_plots.py \
-    --dataset-dir "${DATASET_DIR}" \
-    --parcels-gpkg "${PARCELS_GPKG}" \
-    --model "${MODEL_PATH}" \
-    --output-dir "${OUTPUT_ROOT}/plots" \
-    --num-samples 5 \
-    --seed 999
+# # 8. Predict
+# # Predicting on the chips folder generated in Step 4
+# echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 9] Running prediction..."
+# python unet/predict.py \
+#     --input-dir "${CHIPS_DIR}" \
+#     --model "${MODEL_PATH}" \
+#     --output-dir "${OUTPUT_ROOT}/predictions" \
+#     --num-workers 8
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pipeline test complete. Outputs in ${OUTPUT_ROOT}"
+# 9. Example Plots
+# echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 10] Generating analysis plots..."
+# python unet/example_plots.py \
+#     --dataset-dir "${DATASET_DIR}" \
+#     --parcels-gpkg "${PARCELS_GPKG}" \
+#     --model "${MODEL_PATH}" \
+#     --output-dir "${OUTPUT_ROOT}/plots" \
+#     --num-samples 5 \
+#     --seed 999
+
+# echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pipeline test complete. Outputs in ${OUTPUT_ROOT}"
 
 
