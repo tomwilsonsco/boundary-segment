@@ -129,7 +129,7 @@ def parse_arguments(args=None):
         "--arch",
         type=str,
         default="unetplusplus",
-        choices=["unet", "unetplusplus", "deeplabv3plus"],
+        choices=["unet", "unetplusplus", "deeplabv3plus", "fpn"],
         help="Model architecture. Default: unetplusplus",
     )
     parser.add_argument(
@@ -317,9 +317,11 @@ def main(args):
         model = smp.UnetPlusPlus(**model_params)
     elif args.arch == "deeplabv3plus":
         model = smp.DeepLabV3Plus(**model_params)
+    elif args.arch == "fpn":
+        model = smp.FPN(**model_params)
     else:
         raise ValueError(
-            f"Unknown architecture: {args.arch}. Supported: unet, unetplusplus, deeplabv3plus"
+            f"Unknown architecture: {args.arch}. Supported: unet, unetplusplus, deeplabv3plus, fpn"
         )
 
     print(f"Using {args.arch} architecture with {args.encoder} encoder")

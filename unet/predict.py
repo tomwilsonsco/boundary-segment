@@ -114,6 +114,14 @@ def load_model(model_path, device):
             classes=1,
             activation=None,
         )
+    elif arch_name == "fpn":
+        model = smp.FPN(
+            encoder_name=encoder_name,
+            encoder_weights="imagenet",
+            in_channels=3,
+            classes=1,
+            activation=None,
+        )
     else:
         raise ValueError(f"Unsupported architecture: {arch_name}")
 
