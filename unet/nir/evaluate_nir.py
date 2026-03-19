@@ -120,7 +120,7 @@ def predict_batch(model, images, device, use_tta=False):
             # Un-rotate probabilities
             probs_unrot = torch.rot90(probs, -k, [2, 3])
             probs_sum += probs_unrot
-        
+
         mean_probs = probs_sum / 4.0
         return mean_probs.squeeze(1).cpu().numpy()
 
@@ -245,7 +245,7 @@ def parse_arguments(args=None):
         help="Root dataset directory containing images/ and masks/ subdirs. "
         "Default: inputs/images/dataset.",
     )
-    
+
     parser.add_argument(
         "--scaler-path",
         type=Path,
@@ -328,18 +328,20 @@ def main(args):
     if not args.model.exists():
         print(f"Error: Model checkpoint not found: {args.model}")
         return
-    
+
     # Load scaler.json
-    scaler_file = args.scaler_path if args.scaler_path else args.dataset_dir / "scaler.json"
+    scaler_file = (
+        args.scaler_path if args.scaler_path else args.dataset_dir / "scaler.json"
+    )
     if not scaler_file.exists():
         raise FileNotFoundError(f"Scaler config not found at: {scaler_file}")
-    
+
     with open(scaler_file, "r") as f:
         scaler_data = json.load(f)
-        
+
     norm_mean = []
     norm_std = []
-    
+
     # Extract mean and std for bands 0 to 3, dividing by 255.0 for albu.Normalize
     for i in range(4):
         band_key = str(i)
@@ -347,11 +349,13 @@ def main(args):
             raise KeyError(f"Band '{band_key}' missing from scaler.json")
         norm_mean.append(scaler_data[band_key]["mean"] / 255.0)
         norm_std.append(scaler_data[band_key]["std"] / 255.0)
-    
+
     print(f"Loading model from {args.model}...")
     model, encoder_name = load_model(args.model, DEVICE)
 
-    test_dataset = FieldTestDataset(test_img_dir, test_mask_dir, transform=get_preprocessing(norm_mean, norm_std))
+    test_dataset = FieldTestDataset(
+        test_img_dir, test_mask_dir, transform=get_preprocessing(norm_mean, norm_std)
+    )
 
     num_workers = min(multiprocessing.cpu_count(), args.num_workers)
     if args.num_workers > multiprocessing.cpu_count():
@@ -376,7 +380,7 @@ def main(args):
         images = images.to(DEVICE, non_blocking=True)
         # Predict on batch
         preds = predict_batch(model, images, DEVICE, use_tta=args.tta)
-        
+
         # Iterate over batch to calculate metrics
         masks_np = masks.numpy()
 
@@ -432,7 +436,5 @@ def main(args):
 
 if __name__ == "__main__":
     parsed_args = parse_arguments()
-
-    
 
     main(parsed_args)

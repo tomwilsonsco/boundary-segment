@@ -137,6 +137,7 @@ class ChipInferenceDataset(torch.utils.data.Dataset):
     Minimal Dataset for inference — reads chips and returns tensor + profile metadata.
     Storing the profile per-chip is cheap (it's just a small dict).
     """
+
     def __init__(self, chip_files, transform):
         self.chip_files = chip_files
         self.transform = transform
@@ -146,7 +147,7 @@ class ChipInferenceDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         chip_path = self.chip_files[idx]
-        
+
         # Defaults
         image = None
         trans_tuple = (0.0,) * 6
@@ -168,7 +169,7 @@ class ChipInferenceDataset(torch.utils.data.Dataset):
             return torch.zeros(3, h, w), str(chip_path), trans_tuple, crs_str, False
 
         augmented = self.transform(image=image)
-        img_tensor = augmented["image"]   # (C, H, W)
+        img_tensor = augmented["image"]  # (C, H, W)
         return img_tensor, str(chip_path), trans_tuple, crs_str, True
 
 
@@ -179,7 +180,7 @@ def _writer_worker(write_queue, input_dir, temp_dir):
     """
     while True:
         item = write_queue.get()
-        if item is None:          # sentinel: inference is done
+        if item is None:  # sentinel: inference is done
             break
         prob_map, chip_path_str, trans_tuple, crs_str, valid = item
         if not valid:
@@ -188,7 +189,7 @@ def _writer_worker(write_queue, input_dir, temp_dir):
 
         chip_path = Path(chip_path_str)
         out_path = temp_dir / chip_path.name
-        
+
         # Reconstruct affine transform
         transform = Affine(*trans_tuple)
 
@@ -201,7 +202,7 @@ def _writer_worker(write_queue, input_dir, temp_dir):
             "transform": transform,
             "crs": crs_str,
             "compress": "lzw",
-            "nodata": 0
+            "nodata": 0,
         }
 
         with rasterio.open(out_path, "w", **profile) as dst:
@@ -225,8 +226,10 @@ def predict_chips(model, input_dir, temp_dir, device, batch_size=32, num_workers
         print(f"No .tif files found in {input_dir}")
         return []
 
-    print(f"Predicting on {len(chip_files)} chips "
-          f"(batch_size={batch_size}, num_workers={num_workers})...")
+    print(
+        f"Predicting on {len(chip_files)} chips "
+        f"(batch_size={batch_size}, num_workers={num_workers})..."
+    )
 
     dataset = ChipInferenceDataset(chip_files, transform)
     loader = torch.utils.data.DataLoader(
@@ -252,7 +255,9 @@ def predict_chips(model, input_dir, temp_dir, device, batch_size=32, num_workers
     use_amp = device == "cuda"
 
     with torch.no_grad():
-        for img_tensors, chip_paths, trans_tuples, crs_strs, valids in tqdm(loader, desc="Inference"):
+        for img_tensors, chip_paths, trans_tuples, crs_strs, valids in tqdm(
+            loader, desc="Inference"
+        ):
             img_tensors = img_tensors.to(device, non_blocking=True)
 
             with torch.amp.autocast(device, enabled=use_amp):
@@ -261,16 +266,18 @@ def predict_chips(model, input_dir, temp_dir, device, batch_size=32, num_workers
                 # squeeze(1): (B,1,H,W) -> (B,H,W)
 
             # Iterate through batch
-            for i, (prob_map, chip_path_str, valid) in enumerate(zip(prob_maps, chip_paths, valids)):
+            for i, (prob_map, chip_path_str, valid) in enumerate(
+                zip(prob_maps, chip_paths, valids)
+            ):
                 valid_bool = valid.item() if isinstance(valid, torch.Tensor) else valid
-                
+
                 # trans_tuples is a list of 6 tensors (components), access ith element of each
                 # crs_strs is a tuple of strings
                 t_tup = tuple(trans_tuples[k][i].item() for k in range(6))
                 c_str = crs_strs[i]
 
                 write_queue.put((prob_map, chip_path_str, t_tup, c_str, valid_bool))
-                
+
                 if valid_bool:
                     output_files.append(temp_dir / Path(chip_path_str).name)
 
@@ -363,13 +370,29 @@ def process_vrt_to_lines(
         chunk_args = []
         for row_start in range(0, height, chunk_size):
             for col_start in range(0, width, chunk_size):
-                chunk_args.append((str(vrt_path), col_start, row_start, width, height, chunk_size, threshold))
+                chunk_args.append(
+                    (
+                        str(vrt_path),
+                        col_start,
+                        row_start,
+                        width,
+                        height,
+                        chunk_size,
+                        threshold,
+                    )
+                )
 
         num_workers = max(1, multiprocessing.cpu_count() - 2)
-        print(f"Processing in {chunk_size}x{chunk_size} chunks with {num_workers} workers...")
+        print(
+            f"Processing in {chunk_size}x{chunk_size} chunks with {num_workers} workers..."
+        )
 
         with multiprocessing.Pool(num_workers) as pool:
-            for result in tqdm(pool.imap_unordered(process_chunk_worker, chunk_args), total=len(chunk_args), desc="Skeletonizing"):
+            for result in tqdm(
+                pool.imap_unordered(process_chunk_worker, chunk_args),
+                total=len(chunk_args),
+                desc="Skeletonizing",
+            ):
                 r, c, h, w, skel = result
                 full_skeleton[r : r + h, c : c + w] = skel
 
@@ -478,7 +501,7 @@ def main():
         temp_dir,
         device,
         batch_size=args.batch_size,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
     )
 
     if not pred_files:

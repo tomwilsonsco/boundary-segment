@@ -119,7 +119,7 @@ def predict_batch(model, images, device, use_tta=False):
             # Un-rotate probabilities
             probs_unrot = torch.rot90(probs, -k, [2, 3])
             probs_sum += probs_unrot
-        
+
         mean_probs = probs_sum / 4.0
         return mean_probs.squeeze(1).cpu().numpy()
 
@@ -320,11 +320,13 @@ def main(args):
     if not args.model.exists():
         print(f"Error: Model checkpoint not found: {args.model}")
         return
-    
+
     print(f"Loading model from {args.model}...")
     model, encoder_name = load_model(args.model, DEVICE)
 
-    test_dataset = FieldTestDataset(test_img_dir, test_mask_dir, transform=get_preprocessing())
+    test_dataset = FieldTestDataset(
+        test_img_dir, test_mask_dir, transform=get_preprocessing()
+    )
 
     num_workers = min(multiprocessing.cpu_count(), args.num_workers)
     if args.num_workers > multiprocessing.cpu_count():
@@ -349,7 +351,7 @@ def main(args):
         images = images.to(DEVICE, non_blocking=True)
         # Predict on batch
         preds = predict_batch(model, images, DEVICE, use_tta=args.tta)
-        
+
         # Iterate over batch to calculate metrics
         masks_np = masks.numpy()
 
@@ -405,7 +407,5 @@ def main(args):
 
 if __name__ == "__main__":
     parsed_args = parse_arguments()
-
-    
 
     main(parsed_args)

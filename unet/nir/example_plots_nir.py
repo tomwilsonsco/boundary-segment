@@ -115,7 +115,7 @@ def run_unet_predict(input_dir, output_dir, model_path=None, scaler_path=None):
 
     if model_path:
         cmd.extend(["--model", str(model_path)])
-        
+
     if scaler_path:
         cmd.extend(["--scaler-path", str(scaler_path)])
 
@@ -348,7 +348,9 @@ def create_6panel_plot(
 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Generate UNet example screenshots (NIR)")
+    parser = argparse.ArgumentParser(
+        description="Generate UNet example screenshots (NIR)"
+    )
 
     parser.add_argument(
         "--dataset-dir",
@@ -439,11 +441,15 @@ def main(args):
         print("\n[Step 4] Skipping prediction (plots-only mode)...")
     else:
         # pred
-        scaler_file = args.scaler_path if args.scaler_path else args.dataset_dir / "scaler.json"
+        scaler_file = (
+            args.scaler_path if args.scaler_path else args.dataset_dir / "scaler.json"
+        )
         if not scaler_file.exists():
-            print(f"Warning: scaler config not found at {scaler_file}. predict_nir.py might fail.")
+            print(
+                f"Warning: scaler config not found at {scaler_file}. predict_nir.py might fail."
+            )
             scaler_file = None
-            
+
         print("\n[Step 4] Running UNet prediction...")
         run_unet_predict(test_chips_dir, args.temp_dir, args.model, scaler_file)
 

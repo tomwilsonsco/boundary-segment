@@ -122,7 +122,7 @@ def parse_arguments(args=None):
         help="Root dataset directory containing images/ and masks/ subdirs. "
         "Default: inputs/images/dataset.",
     )
-    
+
     parser.add_argument(
         "--scaler-path",
         type=Path,
@@ -262,16 +262,18 @@ def main(args):
     print(f"Loss plot will be saved to: {loss_plot_path}")
 
     # Load scaler.json
-    scaler_file = args.scaler_path if args.scaler_path else args.dataset_dir / "scaler.json"
+    scaler_file = (
+        args.scaler_path if args.scaler_path else args.dataset_dir / "scaler.json"
+    )
     if not scaler_file.exists():
         raise FileNotFoundError(f"Scaler config not found at: {scaler_file}")
-    
+
     with open(scaler_file, "r") as f:
         scaler_data = json.load(f)
-        
+
     norm_mean = []
     norm_std = []
-    
+
     # Extract mean and std for bands 0 to 3, dividing by 255.0 for albu.Normalize
     for i in range(4):
         band_key = str(i)
@@ -279,7 +281,7 @@ def main(args):
             raise KeyError(f"Band '{band_key}' missing from scaler.json")
         norm_mean.append(scaler_data[band_key]["mean"] / 255.0)
         norm_std.append(scaler_data[band_key]["std"] / 255.0)
-        
+
     print(f"Loaded normalisation config from {scaler_file}")
 
     train_dataset = FieldDataset(
