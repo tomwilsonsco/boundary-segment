@@ -198,22 +198,24 @@ def main(args):
     print(f"Saving results to {out_gpkg}...")
     gdf.to_file(out_gpkg, driver="GPKG")
     print("Done.")
-    
+
     if results:
         print("\n" + "=" * 40)
         print("Mean Metrics per Chip")
         print("=" * 40)
-        
+
         valid_gdf = gdf.dropna(subset=["f1_score"])
-        
+
         print("Overall:")
         print(f"  Precision: {valid_gdf['precision'].mean():.4f}")
         print(f"  Recall:    {valid_gdf['recall'].mean():.4f}")
         print(f"  F1 Score:  {valid_gdf['f1_score'].mean():.4f}")
-        
+
         if args.dataset_dir:
             print("\nBy Dataset Split:")
-            grouped = valid_gdf.groupby("dataset_split")[["precision", "recall", "f1_score"]].mean()
+            grouped = valid_gdf.groupby("dataset_split")[
+                ["precision", "recall", "f1_score"]
+            ].mean()
             for split, row in grouped.iterrows():
                 print(f"  {split.upper()}:")
                 print(f"    Precision: {row['precision']:.4f}")
