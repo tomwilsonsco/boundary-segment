@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 from pathlib import Path
 import geopandas as gpd
 import pandas as pd
@@ -133,12 +134,43 @@ def main(args):
     fp_len = fp_gdf.geometry.length.sum()
     fn_len = fn_gdf.geometry.length.sum()
 
-    print("\n" + "=" * 40)
-    print("Evaluation Complete - Total Lengths")
-    print(f"  TP length: {tp_len:,.1f} m")
-    print(f"  FP length: {fp_len:,.1f} m")
-    print(f"  FN length: {fn_len:,.1f} m")
-    print("=" * 40)
+    precision = tp_len / (tp_len + fp_len) if (tp_len + fp_len) > 0 else 0.0
+    recall = tp_len / (tp_len + fn_len) if (tp_len + fn_len) > 0 else 0.0
+    f1_score = (
+        2 * (precision * recall) / (precision + recall)
+        if (precision + recall) > 0
+        else 0.0
+    )
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    results_text = []
+    results_text.append("=" * 60)
+    results_text.append(f"LINE EVALUATION RESULTS - {timestamp}")
+    results_text.append("=" * 60)
+    results_text.append(f"Prediction: {args.pred_gpkg.name}")
+    results_text.append(f"Ground Truth: {args.parcels.name}")
+    results_text.append(f"Buffer distance: {args.buffer_dist} m")
+    results_text.append("")
+    results_text.append("Total Lengths:")
+    results_text.append(f"  TP length: {tp_len:,.1f} m")
+    results_text.append(f"  FP length: {fp_len:,.1f} m")
+    results_text.append(f"  FN length: {fn_len:,.1f} m")
+    results_text.append("")
+    results_text.append("Metrics (based on line length):")
+    results_text.append(f"  Precision: {precision:.4f}")
+    results_text.append(f"  Recall:    {recall:.4f}")
+    results_text.append(f"  F1 Score:  {f1_score:.4f}")
+    results_text.append("=" * 60)
+    results_text.append("")
+
+    print("\n" + "\n".join(results_text))
+
+    log_file = args.pred_gpkg.parent / "line_evaluate_results.log"
+    with open(log_file, "a") as f:
+        f.write("\n".join(results_text) + "\n")
+
+    print(f"Results appended to {log_file}")
 
 
 if __name__ == "__main__":
