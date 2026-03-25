@@ -75,7 +75,7 @@ Uses the [rs-chip](https://github.com/tomwilsonsco/rs-chip) package.
 Progress bar takes a while to move from 0 as only moves once whole batch complete. Look at the output dir that chip files are being created if unsure.
 
 ```bash
-python utils/chip_image.py --vrt "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/apgb_imgs.vrt" --chip-size 512 --chip-offset 384 --resampling-factor 0.5
+python utils/chip_image.py --vrt "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/apgb_imgs.vrt" --chip-size 512 --chip-offset 384 --resampling-factor 0.5 --create-index-layer
 ```
 
 The `--resampling-factor 0.5` is used in this example to downscale the chips at the point of creation from 0.125 m per pixel in the source imagery to 0.25 m, requiring 4 times fewer chips to cover a given extent. The output chip size (512 in this example) accounts for the downscaling and output chips will be 0.25 m per pixel and 512 by 512 pixels. 
@@ -129,6 +129,27 @@ python unet/example_plots.py --dataset-dir inputs/images/gretna/dataset  --parce
 ```
 
 ![Example test set prediction](plots/apgb_imgs_8832_40320_analysis.png)
+
+## 10. Run line evaluation
+The models's aim is to predict true, visible boundary lines, but in the subsequent comparison work, the prediction line is allowed to be within a buffer of the mapped parcel line. 
+
+This script accounts for this by specifying a buffer distance (metres) and then calculates lengths of true positive (TP), false positive (FP), false negative (FN) prediction line segments. These are written into a new output line geometry layer.
+
+```bash
+python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch.gpkg --parcels inputs/gretna_parcels.gpkg --buffer-dist 3
+```
+
+## 11. Stats per chip
+It is useful to see statistics per chip on lengths of prediction TP, FP, FN and these can be used to calculate precision and recall and then F1 scores per chip. 
+
+This can be used to rank chips and review ones with a low F1 to discern chips with non-visible boundary lines (not benefitting training), from difficult to predict lines but that could be predicted by refining model training.
+
+The `unet/chip_metrics.py` process adds these stats per chip to a copy of the index layer. Make sure to have used the `--create-index-layer` option of `utils/chip_image.py`.
+
+```bash
+python unet/chip_metrics.py --line-comparison outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch_result_compare.gpkg --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/masks" --chips-index "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index.gpkg" --dataset-dir inputs/images/gretna/dataset
+```
+ 
 
 # Running full process
 A shell script is included that runs each stage described above for testing. This could be edited for production runs too. In a terminal after `cd` to the repository run:
