@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import cv2
 import tifffile as tiff
@@ -116,20 +117,22 @@ def get_validation_augmentation():
     )
 
 
-def weighted_l1_loss(predictions, targets, pos_weight=10.0):
+def balanced_bce_loss(logits, targets):
     """
-    Calculates L1 loss but applies a multiplier to regions 
-    where the ground truth boundary gradient exists.
+    BCE loss with dynamic class-balance weighting to handle the large
+    imbalance between background pixels and boundary pixels in gradient masks.
+    The pos_weight is computed per batch from the actual ratio of
+    background to foreground pixels, so it adapts to each chip's content.
+    This is a numerically stable version that takes logits as input.
     """
-    # Calculate standard absolute error per pixel
-    l1_error = torch.abs(predictions - targets)
-    
-    # Create a weight mask: e.g., multiply error by 10 in boundary zones, 1 in background
-    weights = torch.where(targets > 0, pos_weight, 1.0)
-    
-    # Apply weights and return the mean
-    weighted_error = l1_error * weights
-    return weighted_error.mean()
+    # Fraction of pixels that are positive (non-zero in gradient mask)
+    pos_fraction = targets.mean().clamp(min=1e-6)
+    neg_fraction = (1.0 - targets).mean().clamp(min=1e-6)
+
+    # Dynamic weight: e.g. if 5% positive, pos_weight = 0.95/0.05 = 19.0
+    pos_weight = neg_fraction / pos_fraction
+
+    return F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos_weight)
 
 
 def parse_arguments(args=None):
@@ -329,7 +332,7 @@ def main(args):
         "encoder_weights": args.weights,
         "in_channels": 3,
         "classes": 1,
-        "activation": "sigmoid",
+        "activation": None,
     }
 
     if args.arch == "unet":
@@ -448,7 +451,7 @@ def main(args):
 
             with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
                 predictions = model(images)
-                loss = weighted_l1_loss(predictions, masks, pos_weight=10.0)
+                loss = balanced_bce_loss(predictions, masks)
                 loss = loss / args.accum_steps
 
             scaler.scale(loss).backward()
@@ -477,7 +480,7 @@ def main(args):
                 # mixed precision validation
                 with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
                     predictions = model(images)
-                    loss = weighted_l1_loss(predictions, masks, pos_weight=10.0)
+                    loss = balanced_bce_loss(predictions, masks)
 
                 val_loss += loss.item()
                 val_loop.set_postfix(loss=loss.item())
