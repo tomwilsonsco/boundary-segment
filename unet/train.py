@@ -84,6 +84,8 @@ class FieldDataset(Dataset):
         if len(mask.shape) == 2:
             mask = mask.unsqueeze(0)
 
+        mask = mask.clamp(0.0, 1.0)  # guard against interpolation artefacts from augmentation
+
         return image, mask.float()
 
     def __len__(self):
@@ -451,7 +453,7 @@ def main(args):
 
             with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
                 predictions = model(images)
-                loss = balanced_bce_loss(predictions, masks)
+                loss = balanced_bce_loss(predictions, masks.to(predictions.dtype))
                 loss = loss / args.accum_steps
 
             scaler.scale(loss).backward()
@@ -480,7 +482,7 @@ def main(args):
                 # mixed precision validation
                 with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
                     predictions = model(images)
-                    loss = balanced_bce_loss(predictions, masks)
+                    loss = balanced_bce_loss(predictions, masks.to(predictions.dtype))
 
                 val_loss += loss.item()
                 val_loop.set_postfix(loss=loss.item())
