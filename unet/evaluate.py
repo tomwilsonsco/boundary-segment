@@ -109,7 +109,8 @@ def predict_batch(model, images, device, use_tta=False):
     """
     if not use_tta:
         with torch.no_grad():
-            probs = model(images)
+            logits = model(images)
+            probs = torch.sigmoid(logits)
             return probs.squeeze(1).cpu().numpy()
 
     # Test Time Augmentation (Batch version)
@@ -118,7 +119,8 @@ def predict_batch(model, images, device, use_tta=False):
         for k in range(4):
             # Rotate batch by k*90 degrees
             imgs_rot = torch.rot90(images, k, [2, 3])
-            probs = model(imgs_rot)
+            logits = model(imgs_rot)
+            probs = torch.sigmoid(logits)
             # Un-rotate probabilities
             probs_unrot = torch.rot90(probs, -k, [2, 3])
             probs_sum += probs_unrot
@@ -205,7 +207,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation="sigmoid",
+            activation=None,
         )
     elif arch_name == "deeplabv3plus":
         model = smp.DeepLabV3Plus(
@@ -213,7 +215,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation="sigmoid",
+            activation=None,
         )
     elif arch_name == "unet":
         model = smp.Unet(
@@ -221,7 +223,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation="sigmoid",
+            activation=None,
         )
     elif arch_name == "fpn":
         model = smp.FPN(
@@ -229,7 +231,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation="sigmoid",
+            activation=None,
         )
     else:
         raise ValueError(f"Unsupported architecture: {arch_name}")

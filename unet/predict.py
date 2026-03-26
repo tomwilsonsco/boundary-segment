@@ -101,7 +101,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation="sigmoid",
+            activation=None,
         )
     elif arch_name == "deeplabv3plus":
         model = smp.DeepLabV3Plus(
@@ -109,7 +109,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation="sigmoid",
+            activation=None,
         )
     elif arch_name == "unet":
         model = smp.Unet(
@@ -117,7 +117,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation="sigmoid",
+            activation=None,
         )
     elif arch_name == "fpn":
         model = smp.FPN(
@@ -125,7 +125,7 @@ def load_model(model_path, device):
             encoder_weights="imagenet",
             in_channels=3,
             classes=1,
-            activation="sigmoid",
+            activation=None,
         )
     else:
         raise ValueError(f"Unsupported architecture: {arch_name}")
@@ -266,8 +266,8 @@ def predict_chips(model, input_dir, temp_dir, device, batch_size=32, num_workers
             img_tensors = img_tensors.to(device, non_blocking=True)
 
             with torch.amp.autocast(device, enabled=use_amp):
-                preds = model(img_tensors)
-                prob_maps = preds.squeeze(1).cpu().numpy()
+                logits = model(img_tensors)
+                prob_maps = torch.sigmoid(logits).squeeze(1).cpu().numpy()
                 # squeeze(1): (B,1,H,W) -> (B,H,W)
 
             # Iterate through batch

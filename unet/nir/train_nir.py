@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 import cv2
 import tifffile as tiff
@@ -108,6 +109,32 @@ def get_validation_augmentation(norm_mean, norm_std):
             ToTensorV2(),
         ]
     )
+
+
+def dynamic_weighted_mse_loss(predictions, targets):
+    """
+    Applies MSE with a dynamic weight based on the batch's 
+    actual ratio of background to boundary pixels.
+    """
+    probs = torch.sigmoid(predictions)
+    
+    squared_error = (probs - targets) ** 2
+    
+    # Work out what fraction of the image actually contains a boundary gradient
+    pos_pixels = (targets > 0.0).float()
+    pos_fraction = pos_pixels.mean().clamp(min=1e-6)
+    neg_fraction = 1.0 - pos_fraction
+    
+    # Calculate the exact weight needed to balance the classes for this batch
+    # E.g., if 2% of pixels are boundaries, dynamic_weight = 0.98 / 0.02 = 49.0
+    dynamic_weight = neg_fraction / pos_fraction
+    
+    # Apply this weight ONLY to the boundary pixels. Leave background at 1.0.
+    weight_mask = torch.where(targets > 0.0, dynamic_weight, 1.0)
+    
+    weighted_error = squared_error * weight_mask
+    
+    return weighted_error.mean()
 
 
 def parse_arguments(args=None):
@@ -361,8 +388,6 @@ def main(args):
         model = torch.compile(model, mode="default")
         print("Model compiled.")
 
-    dice_loss = smp.losses.DiceLoss(mode="binary", from_logits=True)
-    focal_loss = smp.losses.FocalLoss(mode="binary", alpha=0.75, gamma=2.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
 
     # Add learning rate scheduler
@@ -457,8 +482,8 @@ def main(args):
             masks = masks.to(DEVICE, non_blocking=True)
 
             with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
-                logits = model(images)
-                loss = dice_loss(logits, masks) + focal_loss(logits, masks)
+                predictions = model(images)
+                loss = dynamic_weighted_mse_loss(predictions, masks.to(predictions.dtype))
                 loss = loss / args.accum_steps
 
             scaler.scale(loss).backward()
@@ -486,8 +511,8 @@ def main(args):
 
                 # mixed precision validation
                 with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
-                    logits = model(images)
-                    loss = dice_loss(logits, masks) + focal_loss(logits, masks)
+                    predictions = model(images)
+                    loss = dynamic_weighted_mse_loss(predictions, masks.to(predictions.dtype))
 
                 val_loss += loss.item()
                 val_loop.set_postfix(loss=loss.item())
