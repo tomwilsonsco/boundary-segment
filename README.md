@@ -89,7 +89,7 @@ python unet/create_masks.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo
 The process using `rschip.DatasetSplitter()` will check for and not copy image-mask pairs that are all background (0 class only).
 
 ```bash
-python unet/split_dataset_train_test.py --image-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips" --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/chips/masks" --output-dir inputs/images/gretna
+python unet/split_dataset_train_test.py --image-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/masks" --output-dir inputs/images/gretna
 ```
 
 ## 6. Train model
