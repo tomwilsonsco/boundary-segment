@@ -75,7 +75,7 @@ Uses the [rs-chip](https://github.com/tomwilsonsco/rs-chip) package.
 Progress bar takes a while to move from 0 as only moves once whole batch complete. Look at the output dir that chip files are being created if unsure.
 
 ```bash
-python utils/chip_image.py --vrt "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/apgb_imgs.vrt" --chip-size 512 --chip-offset 384 --resampling-factor 0.5 --create-index-layer
+python utils/chip_image.py --vrt "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/downscaled_025/apgb_imgs.vrt" --chip-size 512 --chip-offset 384 --resampling-factor 0.5
 ```
 
 The `--resampling-factor 0.5` is used in this example to downscale the chips at the point of creation from 0.125 m per pixel in the source imagery to 0.25 m, requiring 4 times fewer chips to cover a given extent. The output chip size (512 in this example) accounts for the downscaling and output chips will be 0.25 m per pixel and 512 by 512 pixels. 
