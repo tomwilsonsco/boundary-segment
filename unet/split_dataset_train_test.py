@@ -2,7 +2,13 @@ import argparse
 from pathlib import Path
 from rschip import DatasetSplitter
 import numpy as np
+import pandas as pd
+import logging
 
+# Set up basic logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 def parse_arguments(args=None):
     """Set up and parse command line arguments."""
@@ -68,6 +74,23 @@ def main(args):
     if not np.isclose(args.train_ratio + args.val_ratio + args.test_ratio, 1.0):
         raise ValueError("The sum of train, val, and test ratios must be 1.0.")
 
+    # Check for and load an ignore list if it exists
+    ignore_list = []
+    ignore_csv_path = args.image_dir / "chips_ignore.csv"
+    if ignore_csv_path.exists():
+        logging.info(f"Found ignore list at: {ignore_csv_path}")
+        try:
+            ignore_df = pd.read_csv(ignore_csv_path)
+            if "file_name" in ignore_df.columns:
+                ignore_list = ignore_df["file_name"].tolist()
+                logging.info(f"Excluding {len(ignore_list)} chips from the dataset.")
+            else:
+                logging.warning(
+                    "chips_ignore.csv found, but 'file_name' column is missing. No chips will be excluded."
+                )
+        except Exception as e:
+            logging.error(f"Failed to read or process {ignore_csv_path}: {e}")
+
     splitter = DatasetSplitter(
         image_dir=args.image_dir,
         mask_dir=args.mask_dir,
@@ -77,6 +100,7 @@ def main(args):
         test_ratio=args.test_ratio,
         seed=args.seed,
         filter_background_only=args.filter_background_only,
+        exclude_files=ignore_list,
     )
 
     splitter.split()
