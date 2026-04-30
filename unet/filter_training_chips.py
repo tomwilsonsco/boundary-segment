@@ -149,7 +149,7 @@ def main():
     if not final_df.empty:
         logging.info("Breakdown of removal conditions:")
         condition_counts = (
-            final_df["remove_condition"].astype(str).str.split(" | ").explode().value_counts()
+            final_df["remove_condition"].astype(str).str.split(" | ", regex=False).explode().value_counts()
         )
         for cond, count in condition_counts.items():
             logging.info(f"  - {cond}: {count}")
