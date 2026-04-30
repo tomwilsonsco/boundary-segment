@@ -468,6 +468,11 @@ def main():
     args = parse_arguments()
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    if device == "cuda":
+        torch.backends.cudnn.benchmark = True  # optimal conv kernels for fixed chip size
+        torch.backends.cuda.matmul.allow_tf32 = True  # Ampere+ free speedup
+        torch.backends.cudnn.allow_tf32 = True
+
     # 1. Setup Paths
     if args.model is None:
         models_dir = Path("models")
@@ -492,6 +497,13 @@ def main():
     # 2. Load Model
     print(f"Loading model from {args.model}...")
     model = load_model(args.model, device)
+
+    if device == "cuda":
+        try:
+            model = torch.compile(model)
+            print("Model compiled with torch.compile()")
+        except Exception as e:
+            print(f"torch.compile() unavailable, skipping: {e}")
 
     # 3. Predict
     print("Starting inference...")
