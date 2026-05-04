@@ -87,7 +87,7 @@ class FieldDataset(Dataset):
 def get_training_augmentation():
     return albu.Compose(
         [
-            albu.RandomCrop(height=512, width=512, always_apply=True),
+            albu.RandomCrop(height=512, width=512, p=1.0),
             albu.HorizontalFlip(p=0.5),
             albu.VerticalFlip(p=0.5),
             albu.RandomRotate90(p=0.5),
