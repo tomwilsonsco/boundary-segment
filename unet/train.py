@@ -128,8 +128,15 @@ def parse_arguments(args=None):
         "--loss-method",
         type=str,
         default="focal_dice",
-        choices=["focal_dice", "bce_dice"],
+        choices=["focal_dice", "bce_dice", "bce_only"],
         help="Loss function combination to use. Default: focal_dice.",
+    )
+    parser.add_argument(
+        "--pos-weight",
+        type=float,
+        default=10.0,
+        help="Positive class weight for BCE loss (bce_dice and bce_only). "
+        "Set to approx. background_pixels / boundary_pixels ratio. Default: 10.0.",
     )
 
     # model
@@ -340,14 +347,19 @@ def main(args):
         model = torch.compile(model, mode="default")
         print("Model compiled.")
 
-    dice_loss = smp.losses.DiceLoss(mode="binary", from_logits=True)
-    if args.loss_method == "bce_dice":
-        print("Using loss method: BCE + Dice")
-        # Use pos_weight to handle class imbalance, favouring the rarer boundary pixels
-        secondary_loss = smp.losses.SoftBCEWithLogitsLoss(pos_weight=torch.tensor([3.0]).to(DEVICE))
+    if args.loss_method == "bce_only":
+        print(f"Using loss method: BCE only (pos_weight={args.pos_weight})")
+        bce_only_loss = smp.losses.SoftBCEWithLogitsLoss(pos_weight=torch.tensor([args.pos_weight]).to(DEVICE))
+        dice_loss = None
+        secondary_loss = None
     else:
-        print("Using loss method: Focal + Dice")
-        secondary_loss = smp.losses.FocalLoss(mode="binary", alpha=0.75, gamma=2.0)
+        dice_loss = smp.losses.DiceLoss(mode="binary", from_logits=True)
+        if args.loss_method == "bce_dice":
+            print(f"Using loss method: BCE + Dice (pos_weight={args.pos_weight})")
+            secondary_loss = smp.losses.SoftBCEWithLogitsLoss(pos_weight=torch.tensor([args.pos_weight]).to(DEVICE))
+        else:
+            print("Using loss method: Focal + Dice")
+            secondary_loss = smp.losses.FocalLoss(mode="binary", alpha=0.75, gamma=2.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
 
     # Add learning rate scheduler
@@ -443,7 +455,10 @@ def main(args):
 
             with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
                 logits = model(images)
-                loss = dice_loss(logits, masks) + secondary_loss(logits, masks)
+                if args.loss_method == "bce_only":
+                    loss = bce_only_loss(logits, masks)
+                else:
+                    loss = dice_loss(logits, masks) + secondary_loss(logits, masks)
                 loss = loss / args.accum_steps
 
             scaler.scale(loss).backward()
@@ -472,7 +487,10 @@ def main(args):
                 # mixed precision validation
                 with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
                     logits = model(images)
-                    loss = dice_loss(logits, masks) + secondary_loss(logits, masks)
+                    if args.loss_method == "bce_only":
+                        loss = bce_only_loss(logits, masks)
+                    else:
+                        loss = dice_loss(logits, masks) + secondary_loss(logits, masks)
 
                 val_loss += loss.item()
                 val_loop.set_postfix(loss=loss.item())
