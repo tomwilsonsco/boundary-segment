@@ -42,7 +42,7 @@ def main():
     parser.add_argument(
         "--min-training-length",
         type=float,
-        default=10.0,
+        default=30.0,
         help="Minimum total true boundary length in metres. Chips below this are 'corner_clippers'. Default: 10.0",
     )
     parser.add_argument(
