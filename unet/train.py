@@ -37,11 +37,10 @@ def suppress_stderr():
 
 
 class FieldDataset(Dataset):
-    def __init__(self, img_dir, mask_dir, transform=None, epoch_multiplier=1):
+    def __init__(self, img_dir, mask_dir, transform=None):
         self.img_dir = Path(img_dir)
         self.mask_dir = Path(mask_dir)
         self.transform = transform
-        self.epoch_multiplier = epoch_multiplier
         self.ids = [
             f.name
             for f in self.img_dir.iterdir()
@@ -49,8 +48,7 @@ class FieldDataset(Dataset):
         ]
 
     def __getitem__(self, i):
-        real_idx = i % len(self.ids)
-        img_name = self.ids[real_idx]
+        img_name = self.ids[i]
         img_path = self.img_dir / img_name
         mask_path = self.mask_dir / img_name
 
@@ -83,13 +81,12 @@ class FieldDataset(Dataset):
         return image, mask.float()
 
     def __len__(self):
-        return len(self.ids) * self.epoch_multiplier
+        return len(self.ids)
 
 
 def get_training_augmentation():
     return albu.Compose(
         [
-            albu.RandomCrop(height=512, width=512, p=1.0),
             albu.HorizontalFlip(p=0.5),
             albu.VerticalFlip(p=0.5),
             albu.RandomRotate90(p=0.5),
@@ -125,13 +122,6 @@ def parse_arguments(args=None):
         default=Path("inputs/images/dataset"),
         help="Root dataset directory containing images/ and masks/ subdirs. "
         "Default: inputs/images/dataset.",
-    )
-
-    parser.add_argument(
-        "--train-multiplier",
-        type=int,
-        default=1,
-        help="Number of times to sample each training image per epoch. Useful when using random cropping. Default: 1.",
     )
 
     parser.add_argument(
@@ -284,7 +274,6 @@ def main(args):
         args.dataset_dir / "images/train",
         args.dataset_dir / "masks/train",
         transform=get_training_augmentation(),
-        epoch_multiplier=args.train_multiplier,
     )
     val_dataset = FieldDataset(
         args.dataset_dir / "images/val",
