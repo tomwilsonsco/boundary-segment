@@ -147,6 +147,9 @@ def main(args):
             print("Clipping boundary lines by chips index...")
             parcel_lines_gdf = gpd.GeoDataFrame(geometry=parcel_lines, crs=crs)
             parcel_lines = gpd.clip(parcel_lines_gdf, index_union).geometry
+
+            print("Clipping prediction lines by chips index...")
+            pred_gdf = gpd.clip(pred_gdf, index_union)
         else:
             print("No TIFFs or index found in imgs-dir. Converting all parcels to boundary lines...")
             parcel_lines = parcels_gdf.geometry.boundary
