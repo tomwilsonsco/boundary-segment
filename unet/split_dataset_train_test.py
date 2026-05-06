@@ -73,6 +73,8 @@ def main(args):
     # validate that the ratios sum to 1
     if not np.isclose(args.train_ratio + args.val_ratio + args.test_ratio, 1.0):
         raise ValueError("The sum of train, val, and test ratios must be 1.0.")
+    if any(r < 0 for r in [args.train_ratio, args.val_ratio, args.test_ratio]):
+        raise ValueError("Ratios cannot be negative.")
 
     # Check for and load an ignore list if it exists
     ignore_list = []
