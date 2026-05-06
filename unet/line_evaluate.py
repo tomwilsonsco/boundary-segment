@@ -3,9 +3,11 @@ from datetime import datetime
 from pathlib import Path
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import GeometryCollection
+import rasterio as rio
+from shapely.geometry import GeometryCollection, box
 from shapely.ops import unary_union
 from shapely.strtree import STRtree
+from tqdm import tqdm
 
 
 def split_by_local_union(source_geoms, mask_buffers, crs):
@@ -79,6 +81,12 @@ def parse_arguments(args=None):
         help="Path to the ground truth parcels shapefile or GPKG.",
     )
     parser.add_argument(
+        "--imgs-dir",
+        type=Path,
+        default=None,
+        help="Optional directory of chip TIFFs to limit evaluation extent.",
+    )
+    parser.add_argument(
         "--buffer-dist",
         type=float,
         default=3.0,
@@ -99,8 +107,54 @@ def main(args):
 
     crs = pred_gdf.crs
 
-    print("Converting parcels to boundary lines and buffering...")
-    parcel_lines = parcels_gdf.geometry.boundary
+    if args.imgs_dir and args.imgs_dir.exists():
+        index_path = args.imgs_dir / "chips_index.gpkg"
+        
+        if index_path.exists():
+            print(f"Loading existing index layer from {index_path}...")
+            index_gdf = gpd.read_file(index_path)
+        else:
+            print(f"Building index layer from {args.imgs_dir}...")
+            geoms = []
+            for file_path in tqdm(list(args.imgs_dir.glob("*.tif")), desc="building index layer"):
+                with rio.open(file_path) as src:
+                    bounds = src.bounds
+                    geom = box(*bounds)
+                geoms.append({"geometry": geom, "file_name": file_path.name})
+    
+            if geoms:
+                with rio.open(list(args.imgs_dir.glob("*.tif"))[0]) as src:
+                    index_crs = src.crs
+                index_gdf = gpd.GeoDataFrame(geoms, crs=index_crs)
+                print(f"Saving index layer to {index_path}...")
+                index_gdf.to_file(index_path, driver="GPKG")
+            else:
+                index_gdf = gpd.GeoDataFrame()
+
+        if not index_gdf.empty:
+            if parcels_gdf.crs != crs:
+                parcels_gdf = parcels_gdf.to_crs(crs)
+            if index_gdf.crs != crs:
+                index_gdf = index_gdf.to_crs(crs)
+
+            index_union = index_gdf.unary_union
+            print("Selecting parcels intersecting chips index...")
+            intersecting_parcels = parcels_gdf[parcels_gdf.intersects(index_union)]
+
+            print("Converting intersecting parcels to boundary lines...")
+            parcel_lines = intersecting_parcels.geometry.boundary
+
+            print("Clipping boundary lines by chips index...")
+            parcel_lines_gdf = gpd.GeoDataFrame(geometry=parcel_lines, crs=crs)
+            parcel_lines = gpd.clip(parcel_lines_gdf, index_union).geometry
+        else:
+            print("No TIFFs or index found in imgs-dir. Converting all parcels to boundary lines...")
+            parcel_lines = parcels_gdf.geometry.boundary
+    else:
+        print("Converting parcels to boundary lines...")
+        parcel_lines = parcels_gdf.geometry.boundary
+
+    print("Buffering parcel lines...")
     parcel_buffers = parcel_lines.buffer(args.buffer_dist)
 
     print("Splitting prediction lines (True Positives / False Positives)...")
