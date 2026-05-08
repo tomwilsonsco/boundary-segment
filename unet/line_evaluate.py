@@ -5,7 +5,7 @@ import geopandas as gpd
 import pandas as pd
 import rasterio as rio
 from shapely.geometry import GeometryCollection, box
-from shapely.ops import unary_union
+from shapely.ops import unary_union, substring
 from shapely.strtree import STRtree
 from tqdm import tqdm
 
@@ -15,9 +15,6 @@ def split_by_local_union(source_geoms, mask_buffers, crs):
     For each geometry in source_geoms, query an STRtree built from
     mask_buffers to find only the nearby buffers, union just those
     locally, then split the source geometry into inside/outside portions.
-
-    This avoids creating one massive global union, which is the main
-    bottleneck when lines cover large extents.
     """
     mask_list = list(mask_buffers)
     tree = STRtree(mask_list)
@@ -25,7 +22,7 @@ def split_by_local_union(source_geoms, mask_buffers, crs):
     inside_list = []
     outside_list = []
 
-    for geom in source_geoms:
+    for geom in tqdm(source_geoms, desc="Splitting by local union"):
         if geom is None or geom.is_empty:
             inside_list.append(GeometryCollection())
             outside_list.append(GeometryCollection())
@@ -48,7 +45,6 @@ def split_by_local_union(source_geoms, mask_buffers, crs):
 def filter_lines(geoseries, crs, label):
     """
     Filters a GeoSeries to keep only lines, returning a labelled GeoDataFrame.
-    This replaces the slow python 'for' loop from extract_lines.
     """
     valid_geoms = geoseries[~geoseries.is_empty]
 
@@ -60,7 +56,6 @@ def filter_lines(geoseries, crs, label):
     gdf["pred_result"] = label
 
     return gdf
-
 
 def parse_arguments(args=None):
     """Set up and parse command line arguments."""
@@ -83,8 +78,8 @@ def parse_arguments(args=None):
     parser.add_argument(
         "--imgs-dir",
         type=Path,
-        default=None,
-        help="Optional directory of chip TIFFs to limit evaluation extent.",
+        required=True,
+        help="Directory of chip TIFFs to limit evaluation extent.",
     )
     parser.add_argument(
         "--buffer-dist",
@@ -107,58 +102,66 @@ def main(args):
 
     crs = pred_gdf.crs
 
-    if args.imgs_dir and args.imgs_dir.exists():
-        index_path = args.imgs_dir / "chips_index.gpkg"
-        
-        if index_path.exists():
-            print(f"Loading existing index layer from {index_path}...")
-            index_gdf = gpd.read_file(index_path)
-        else:
-            print(f"Building index layer from {args.imgs_dir}...")
-            geoms = []
-            for file_path in tqdm(list(args.imgs_dir.glob("*.tif")), desc="building index layer"):
-                with rio.open(file_path) as src:
-                    bounds = src.bounds
-                    geom = box(*bounds)
-                geoms.append({"geometry": geom, "file_name": file_path.name})
-    
-            if geoms:
-                with rio.open(list(args.imgs_dir.glob("*.tif"))[0]) as src:
-                    index_crs = src.crs
-                index_gdf = gpd.GeoDataFrame(geoms, crs=index_crs)
-                print(f"Saving index layer to {index_path}...")
-                index_gdf.to_file(index_path, driver="GPKG")
-            else:
-                index_gdf = gpd.GeoDataFrame()
+    if not args.imgs_dir.exists():
+        raise FileNotFoundError(f"Image directory not found: {args.imgs_dir}")
 
-        if not index_gdf.empty:
-            if parcels_gdf.crs != crs:
-                parcels_gdf = parcels_gdf.to_crs(crs)
-            if index_gdf.crs != crs:
-                index_gdf = index_gdf.to_crs(crs)
+    index_path = args.imgs_dir / "chips_index.gpkg"
 
-            index_union = index_gdf.unary_union
-            print("Selecting parcels intersecting chips index...")
-            intersecting_parcels = parcels_gdf[parcels_gdf.intersects(index_union)]
-
-            print("Converting intersecting parcels to boundary lines...")
-            parcel_lines = intersecting_parcels.geometry.boundary
-
-            print("Clipping boundary lines by chips index...")
-            parcel_lines_gdf = gpd.GeoDataFrame(geometry=parcel_lines, crs=crs)
-            parcel_lines = gpd.clip(parcel_lines_gdf, index_union).geometry
-
-            print("Clipping prediction lines by chips index...")
-            pred_gdf = gpd.clip(pred_gdf, index_union)
-        else:
-            print("No TIFFs or index found in imgs-dir. Converting all parcels to boundary lines...")
-            parcel_lines = parcels_gdf.geometry.boundary
+    if index_path.exists():
+        print(f"Loading existing index layer from {index_path}...")
+        index_gdf = gpd.read_file(index_path)
     else:
-        print("Converting parcels to boundary lines...")
-        parcel_lines = parcels_gdf.geometry.boundary
+        print(f"Building index layer from {args.imgs_dir}...")
+        tif_files = list(args.imgs_dir.glob("*.tif"))
+        if not tif_files:
+            raise FileNotFoundError(f"No .tif files found in {args.imgs_dir}")
+
+        geoms = []
+        for file_path in tqdm(tif_files, desc="building index layer"):
+            with rio.open(file_path) as src:
+                bounds = src.bounds
+                geom = box(*bounds)
+            geoms.append({"geometry": geom, "file_name": file_path.name})
+
+        with rio.open(tif_files[0]) as src:
+            index_crs = src.crs
+        index_gdf = gpd.GeoDataFrame(geoms, crs=index_crs)
+        print(f"Saving index layer to {index_path}...")
+        index_gdf.to_file(index_path, driver="GPKG")
+
+    if index_gdf.empty:
+        raise ValueError("Chips index is empty. Cannot determine evaluation extent.")
+
+    if parcels_gdf.crs != crs:
+        parcels_gdf = parcels_gdf.to_crs(crs)
+    if index_gdf.crs != crs:
+        index_gdf = index_gdf.to_crs(crs)
+
+    index_union = index_gdf.union_all()
+    print("Selecting parcels intersecting chips index...")
+    intersecting_parcels = parcels_gdf[parcels_gdf.intersects(index_union)]
+
+    print("Converting intersecting parcels to boundary lines...")
+    parcel_lines = intersecting_parcels.geometry.boundary
+
+    print("Clipping boundary lines by chips index...")
+    parcel_lines_gdf = gpd.GeoDataFrame(geometry=parcel_lines, crs=crs)
+    parcel_lines_gdf = gpd.clip(parcel_lines_gdf, index_union)
+
+    print("Removing parcel lines near the external boundary of the study area...")
+    extent_boundary_buffer = index_union.boundary.buffer(1.0)
+    trimmed_geoms = parcel_lines_gdf.geometry.difference(extent_boundary_buffer)
+    parcel_lines_gdf = parcel_lines_gdf.copy()
+    parcel_lines_gdf["geometry"] = trimmed_geoms
+    parcel_lines_gdf = parcel_lines_gdf[~parcel_lines_gdf.geometry.is_empty].reset_index(drop=True)
+
+    parcel_lines = parcel_lines_gdf.geometry
+
+    print("Clipping prediction lines by chips index...")
+    pred_gdf = gpd.clip(pred_gdf, index_union)
 
     print("Buffering parcel lines...")
-    parcel_buffers = parcel_lines.buffer(args.buffer_dist)
+    parcel_buffers = parcel_lines.buffer(args.buffer_dist, resolution=4)
 
     print("Splitting prediction lines (True Positives / False Positives)...")
     tp_geoms, fp_geoms = split_by_local_union(pred_gdf.geometry, parcel_buffers, crs)
@@ -166,8 +169,13 @@ def main(args):
     fp_gdf = filter_lines(fp_geoms, crs, "FP")
 
     # FN
+    print("Exploding and simplifying prediction lines...")
+    exploded_preds = pred_gdf.explode(index_parts=False)
+
+    simplified_pred_lines = exploded_preds.geometry.simplify(1.0)
+    
     print(f"Buffering prediction lines by {args.buffer_dist}...")
-    pred_buffers = pred_gdf.geometry.buffer(args.buffer_dist)
+    pred_buffers = simplified_pred_lines.buffer(args.buffer_dist, resolution=4)
     print("Evaluating ground truth lines for False Negatives (FN)...")
     _, fn_geoms = split_by_local_union(parcel_lines, pred_buffers, crs)
     fn_gdf = filter_lines(fn_geoms, crs, "FN")
@@ -176,15 +184,15 @@ def main(args):
     combined_df = pd.concat([tp_gdf, fp_gdf, fn_gdf], ignore_index=True)
     result_gdf = gpd.GeoDataFrame(combined_df, geometry="geometry", crs=crs)
 
-    print("Dissolving geometries by prediction result...")
-    result_gdf = result_gdf.dissolve(by="pred_result").reset_index()
-
     print("Exploding multi-part geometries...")
-    result_gdf = result_gdf.explode(index_parts=True).reset_index(drop=True)
+    result_gdf = result_gdf.explode(index_parts=False).reset_index(drop=True)
 
     output_gpkg = args.pred_gpkg.parent / f"{args.pred_gpkg.stem}_result_compare.gpkg"
     print(f"Saving evaluated lines to {output_gpkg}...")
     output_gpkg.parent.mkdir(parents=True, exist_ok=True)
+
+    if output_gpkg.exists():
+        output_gpkg.unlink()
     result_gdf.to_file(output_gpkg, driver="GPKG")
 
     tp_len = tp_gdf.geometry.length.sum()
