@@ -2,7 +2,6 @@ import os
 import torch
 from torch.utils.data import DataLoader, Dataset
 import cv2
-cv2.setNumThreads(0)
 import segmentation_models_pytorch as smp
 import albumentations as albu
 from albumentations.pytorch import ToTensorV2
@@ -313,8 +312,6 @@ def main(args):
         pin_memory=True,
         persistent_workers=True,
     )
-
-    _ = iter(val_loader)
 
     print(
         f"Training on {len(train_dataset)} images, Validating on {len(val_dataset)} images."
