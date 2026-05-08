@@ -12,6 +12,7 @@ import torch
 import cv2
 import numpy as np
 import rasterio
+from scipy.ndimage import convolve
 from rasterio.windows import Window
 from rasterio.transform import Affine
 from osgeo import gdal
@@ -135,7 +136,6 @@ def load_model(model_path, device):
 class ChipInferenceDataset(torch.utils.data.Dataset):
     """
     Minimal Dataset for inference — reads chips and returns tensor + profile metadata.
-    Storing the profile per-chip is cheap (it's just a small dict).
     """
 
     def __init__(self, chip_files, transform):
@@ -175,7 +175,7 @@ class ChipInferenceDataset(torch.utils.data.Dataset):
 
 def _writer_worker(write_queue, temp_dir):
     """
-    Runs in a background thread — drains (prob_map, chip_path) pairs from
+    Runs in a background thread uses (prob_map, chip_path) pairs from
     the queue and writes GeoTIFF prediction files without blocking inference.
     """
     while True:
@@ -390,8 +390,21 @@ def process_chunk_worker(args):
                 return []
                 
             binary_chunk = (chunk > threshold).astype(np.uint8)
+
+            # 1. Smooth the mask to prevent hairy spurs
+            kernel_close = np.ones((3, 3), np.uint8)
+            binary_chunk = cv2.morphologyEx(binary_chunk, cv2.MORPH_CLOSE, kernel_close)
+
+            # 2. Skeletonise
             skeleton_chunk = skeletonize(binary_chunk).astype(np.uint8)
-            
+
+            # 3. Junction breaker: pixels with >2 connected neighbours are branch points.
+            # Convolve with a flat 3x3 kernel — each skeleton pixel accumulates itself + neighbours.
+            # Sum > 3 means the pixel (value 1) has 3+ skeleton neighbours, i.e. it is a junction.
+            neighbors = convolve(skeleton_chunk, np.ones((3, 3), dtype=np.uint8), mode='constant', cval=0)
+            junctions = (neighbors > 3) & (skeleton_chunk == 1)
+            skeleton_chunk[junctions] = 0
+
             contours, _ = cv2.findContours(skeleton_chunk, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
             
             chunk_lines = []
@@ -470,6 +483,33 @@ def process_vrt_to_lines(
         return lines, crs
 
 
+def extend_line(line, distance=0.5):
+    """
+    Extends a Shapely LineString at both ends by a specified distance.
+    It calculates the trajectory of the first and last segments to ensure
+    the extension is a straight continuation of the line.
+    """
+    if line is None or line.is_empty or len(line.coords) < 2:
+        return line
+
+    coords = list(line.coords)
+
+    p1_start = np.array(coords[0])
+    p2_start = np.array(coords[1])
+    vector_start = p1_start - p2_start
+    length_start = np.linalg.norm(vector_start)
+    new_start = p1_start + (vector_start / length_start) * distance if length_start > 0 else p1_start
+
+    p1_end = np.array(coords[-2])
+    p2_end = np.array(coords[-1])
+    vector_end = p2_end - p1_end
+    length_end = np.linalg.norm(vector_end)
+    new_end = p2_end + (vector_end / length_end) * distance if length_end > 0 else p2_end
+
+    new_coords = [tuple(new_start)] + coords + [tuple(new_end)]
+    return LineString(new_coords)
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Run Inference and Stitch Results")
 
@@ -530,6 +570,12 @@ def parse_arguments():
         type=int,
         default=4,
         help="DataLoader worker processes for prefetching chips. Default: 4.",
+    )
+    parser.add_argument(
+        "--extend-lines",
+        type=float,
+        default=0.5,
+        help="Extend each predicted line at both ends by this distance in metres. Set to 0 to disable. Default: 0.5",
     )
 
     return parser.parse_args()
@@ -625,7 +671,11 @@ def main():
         min_contour_length=args.min_contour_length,
     )
 
-    # 6. Save Output
+    # 6. Extend lines
+    if args.extend_lines > 0:
+        lines = [extend_line(line, args.extend_lines) for line in lines]
+
+    # 7. Save Output
     if lines:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_name = args.model.stem
@@ -638,7 +688,7 @@ def main():
     else:
         print("No lines detected.")
 
-    # 7. Cleanup
+    # 8. Cleanup
     if not args.keep_preds:
         print("Cleaning up temporary files...")
         shutil.rmtree(temp_dir)
