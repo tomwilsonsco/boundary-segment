@@ -15,7 +15,7 @@ import rasterio
 from scipy.ndimage import convolve
 from rasterio.windows import Window
 from rasterio.transform import Affine
-from osgeo import gdal
+#from osgeo import gdal
 import geopandas as gpd
 from shapely.geometry import LineString
 from skimage.morphology import skeletonize
