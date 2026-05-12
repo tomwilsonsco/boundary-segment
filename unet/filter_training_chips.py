@@ -20,11 +20,11 @@ def get_removal_condition(row, min_length, max_invis, max_wrong_gt):
 
     # Condition 2: Invisible boundaries (High FN / Low Recall)
     if (row["Total_True_Length"] >= 20) and (row["recall"] < max_invis):
-        reasons.append("invisible_boundary")
+        reasons.append("missed_or_invisible_boundary")
 
     # Condition 3: Wrong ground truth (High FP / Low Precision)
     if (row["FP_length"] >= 20) and (row["precision"] < max_wrong_gt):
-        reasons.append("wrong_ground_truth")
+        reasons.append("extra_boundary")
 
     return " | ".join(reasons) if reasons else None
 
@@ -49,13 +49,13 @@ def main():
         "--invisible-boundary-max",
         type=float,
         default=0.1,
-        help="Maximum recall threshold. If recall is below this (and true length >= 20m), it is an 'invisible_boundary'. Default: 0.1",
+        help="Maximum recall threshold. If recall is below this (and true length >= 20m), it is a 'missed_or_invisible_boundary'. Default: 0.1",
     )
     parser.add_argument(
         "--wrong-ground-truth",
         type=float,
         default=0.2,
-        help="Maximum precision threshold. If precision is below this (and FP length >= 20m), it is 'wrong_ground_truth'. Default: 0.2",
+        help="Maximum precision threshold. If precision is below this (and FP length >= 20m), it is 'extra_boundary'. Default: 0.2",
     )
 
     args = parser.parse_args()
