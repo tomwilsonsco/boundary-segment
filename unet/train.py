@@ -1,5 +1,7 @@
 import os
+import random
 import torch
+import numpy as np
 from torch.utils.data import DataLoader, Dataset
 import cv2
 import segmentation_models_pytorch as smp
@@ -234,17 +236,43 @@ def parse_arguments(args=None):
         default=False,
         help="Use BF16 mixed precision instead of FP16. Recommended for Ada/Ampere+ GPUs.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducibility. Sets Python, NumPy, and PyTorch seeds. "
+             "Also disables cuDNN benchmarking to ensure deterministic op selection. "
+             "Omit to use a non-deterministic run (faster on GPU).",
+    )
 
     return parser.parse_args(args)
+
+
+def _seed_worker(worker_id):
+    """Ensure each DataLoader worker gets a unique but deterministic seed."""
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 def main(args):
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+    # Seeding — must happen before model init, DataLoader creation, etc.
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        print(f"Seed set to {args.seed} (deterministic mode enabled, cuDNN benchmarking disabled)")
+    
     if torch.cuda.is_available():
-        torch.backends.cudnn.benchmark = True
+        if args.seed is None:
+            torch.backends.cudnn.benchmark = True
+            print("cuDNN benchmarking enabled")
         torch.set_float32_matmul_precision("high")
-        print("cuDNN benchmarking enabled")
         print("TF32 matmul precision enabled")
 
     # ensure output directory exists
@@ -296,6 +324,10 @@ def main(args):
 
     print(f"Using {num_workers} workers for data loading.")
 
+    generator = torch.Generator()
+    if args.seed is not None:
+        generator.manual_seed(args.seed)
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -303,6 +335,8 @@ def main(args):
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=True,
+        worker_init_fn=_seed_worker if args.seed is not None else None,
+        generator=generator if args.seed is not None else None,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -311,6 +345,7 @@ def main(args):
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=True,
+        worker_init_fn=_seed_worker if args.seed is not None else None,
     )
 
     print(
@@ -526,6 +561,8 @@ def main(args):
                 "val_losses": val_losses,
                 "arch": args.arch,
                 "encoder": args.encoder,
+                "loss_method": args.loss_method,
+                "batch_size": args.batch_size,
             }
             torch.save(checkpoint, checkpoint_path)
             # save model weights and config for inference
