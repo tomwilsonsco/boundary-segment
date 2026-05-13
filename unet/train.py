@@ -394,7 +394,7 @@ def main(args):
             secondary_loss = smp.losses.SoftBCEWithLogitsLoss(pos_weight=torch.tensor([args.pos_weight]).to(DEVICE))
         else:
             print("Using loss method: Focal + Dice")
-            secondary_loss = smp.losses.FocalLoss(mode="binary", alpha=0.75, gamma=2.0)
+            secondary_loss = smp.losses.FocalLoss(mode="binary", alpha=0.85, gamma=1.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
 
     # Add learning rate scheduler
