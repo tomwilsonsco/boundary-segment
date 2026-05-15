@@ -61,7 +61,7 @@ def main():
     args = parser.parse_args()
 
     input_path = Path(args.input_gpkg)
-    
+
     if not args.chips_dir:
         logging.error("Missing required argument: --chips-dir")
         return
@@ -115,17 +115,21 @@ def main():
         new_removals_df = to_remove[["file_name", "remove_condition"]]
 
     csv_path = chips_dir / "chips_ignore.csv"
-    
+
     # Handle existing chips_ignore.csv
     if csv_path.exists():
         try:
             existing_df = pd.read_csv(csv_path)
             conditions_to_keep = ["outside image bounds", "outside training"]
             if "remove_condition" in existing_df.columns:
-                kept_df = existing_df[existing_df["remove_condition"].isin(conditions_to_keep)]
+                kept_df = existing_df[
+                    existing_df["remove_condition"].isin(conditions_to_keep)
+                ]
             else:
                 kept_df = pd.DataFrame(columns=["file_name", "remove_condition"])
-            logging.info(f"Loaded existing list and kept {len(kept_df)} manually/externally defined exclusions.")
+            logging.info(
+                f"Loaded existing list and kept {len(kept_df)} manually/externally defined exclusions."
+            )
         except Exception as e:
             logging.error(f"Failed to read existing CSV: {e}")
             kept_df = pd.DataFrame(columns=["file_name", "remove_condition"])
@@ -143,13 +147,19 @@ def main():
     final_df.to_csv(csv_path, index=False)
 
     # Summary stats
-    logging.info(f"Successfully identified {len(new_removals_df)} chips for removal based on metrics.")
+    logging.info(
+        f"Successfully identified {len(new_removals_df)} chips for removal based on metrics."
+    )
     logging.info(f"Total chips in ignore list (including preserved): {len(final_df)}")
 
     if not final_df.empty:
         logging.info("Breakdown of removal conditions:")
         condition_counts = (
-            final_df["remove_condition"].astype(str).str.split(" | ", regex=False).explode().value_counts()
+            final_df["remove_condition"]
+            .astype(str)
+            .str.split(" | ", regex=False)
+            .explode()
+            .value_counts()
         )
         for cond, count in condition_counts.items():
             logging.info(f"  - {cond}: {count}")

@@ -8,8 +8,6 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-SPLITS = ["train", "val", "test"]
-
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -31,6 +29,13 @@ def parse_arguments():
         "--dry-run",
         action="store_true",
         help="If set, log what would be deleted without actually deleting anything.",
+    )
+    parser.add_argument(
+        "--splits",
+        nargs="+",
+        choices=["train", "val", "test"],
+        default=["train"],
+        help="Which splits to delete chips from. Can be any combination of train, val, test (e.g., --splits train test). Default: train.",
     )
     return parser.parse_args()
 
@@ -64,9 +69,9 @@ def main():
     not_found = 0
 
     for file_name in file_names:
-        for split in SPLITS:
+        for split in args.splits:
             for subdir in ("images", "masks"):
-                target = args.dataset_dir / split / subdir / file_name
+                target = args.dataset_dir / subdir / split / file_name
                 if target.exists():
                     if args.dry_run:
                         logging.info(f"[dry-run] Would delete: {target}")
@@ -80,7 +85,9 @@ def main():
     if args.dry_run:
         logging.info(f"Dry run complete. Would have deleted {deleted} file(s).")
     else:
-        logging.info(f"Done. Deleted {deleted} file(s). {not_found} paths were not found.")
+        logging.info(
+            f"Done. Deleted {deleted} file(s). {not_found} paths were not found."
+        )
 
 
 if __name__ == "__main__":

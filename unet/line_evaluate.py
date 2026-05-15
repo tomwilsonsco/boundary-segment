@@ -57,6 +57,7 @@ def filter_lines(geoseries, crs, label):
 
     return gdf
 
+
 def parse_arguments(args=None):
     """Set up and parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -153,7 +154,9 @@ def main(args):
     trimmed_geoms = parcel_lines_gdf.geometry.difference(extent_boundary_buffer)
     parcel_lines_gdf = parcel_lines_gdf.copy()
     parcel_lines_gdf["geometry"] = trimmed_geoms
-    parcel_lines_gdf = parcel_lines_gdf[~parcel_lines_gdf.geometry.is_empty].reset_index(drop=True)
+    parcel_lines_gdf = parcel_lines_gdf[
+        ~parcel_lines_gdf.geometry.is_empty
+    ].reset_index(drop=True)
 
     parcel_lines = parcel_lines_gdf.geometry
 
@@ -173,7 +176,7 @@ def main(args):
     exploded_preds = pred_gdf.explode(index_parts=False)
 
     simplified_pred_lines = exploded_preds.geometry.simplify(1.0)
-    
+
     print(f"Buffering prediction lines by {args.buffer_dist}...")
     pred_buffers = simplified_pred_lines.buffer(args.buffer_dist, resolution=4)
     print("Evaluating ground truth lines for False Negatives (FN)...")

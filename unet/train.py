@@ -241,8 +241,8 @@ def parse_arguments(args=None):
         type=int,
         default=None,
         help="Random seed for reproducibility. Sets Python, NumPy, and PyTorch seeds. "
-             "Also disables cuDNN benchmarking to ensure deterministic op selection. "
-             "Omit to use a non-deterministic run (faster on GPU).",
+        "Also disables cuDNN benchmarking to ensure deterministic op selection. "
+        "Omit to use a non-deterministic run (faster on GPU).",
     )
 
     return parser.parse_args(args)
@@ -266,8 +266,10 @@ def main(args):
         torch.cuda.manual_seed_all(args.seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-        print(f"Seed set to {args.seed} (deterministic mode enabled, cuDNN benchmarking disabled)")
-    
+        print(
+            f"Seed set to {args.seed} (deterministic mode enabled, cuDNN benchmarking disabled)"
+        )
+
     if torch.cuda.is_available():
         if args.seed is None:
             torch.backends.cudnn.benchmark = True
@@ -384,14 +386,18 @@ def main(args):
 
     if args.loss_method == "bce_only":
         print(f"Using loss method: BCE only (pos_weight={args.pos_weight})")
-        bce_only_loss = smp.losses.SoftBCEWithLogitsLoss(pos_weight=torch.tensor([args.pos_weight]).to(DEVICE))
+        bce_only_loss = smp.losses.SoftBCEWithLogitsLoss(
+            pos_weight=torch.tensor([args.pos_weight]).to(DEVICE)
+        )
         dice_loss = None
         secondary_loss = None
     else:
         dice_loss = smp.losses.DiceLoss(mode="binary", from_logits=True)
         if args.loss_method == "bce_dice":
             print(f"Using loss method: BCE + Dice (pos_weight={args.pos_weight})")
-            secondary_loss = smp.losses.SoftBCEWithLogitsLoss(pos_weight=torch.tensor([args.pos_weight]).to(DEVICE))
+            secondary_loss = smp.losses.SoftBCEWithLogitsLoss(
+                pos_weight=torch.tensor([args.pos_weight]).to(DEVICE)
+            )
         else:
             print("Using loss method: Focal + Dice")
             secondary_loss = smp.losses.FocalLoss(mode="binary", alpha=0.85, gamma=1.0)
