@@ -111,15 +111,20 @@ def main(args):
             crs = src.crs
         gdf = gpd.GeoDataFrame(geoms, crs=crs)
         gdf.to_file(out_dir / "chips_index.gpkg")
-        
+
         with rio.open(vrt_path) as vrt_src:
             vrt_geom = box(*vrt_src.bounds)
-            
+
         # Find polygons not entirely within the VRT extent (small buffer for floating point precision)
         outside_mask = ~gdf.geometry.within(vrt_geom.buffer(0.001))
         outside_chips = gdf[outside_mask]
         if not outside_chips.empty:
-            ignore_df = pd.DataFrame({"file_name": outside_chips["file_name"], "remove_condition": "outside image bounds"})
+            ignore_df = pd.DataFrame(
+                {
+                    "file_name": outside_chips["file_name"],
+                    "remove_condition": "outside image bounds",
+                }
+            )
             ignore_df.to_csv(out_dir / "chips_ignore.csv", index=False)
 
     if args.sample_scaler:

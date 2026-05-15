@@ -20,6 +20,7 @@ SUBDIRS = [
     Path("masks") / "test",
 ]
 
+
 def rename_file(filepath: Path, prefix: str):
     """Worker function to rename a single file."""
     if not filepath.name.startswith(f"{prefix}_"):
@@ -29,10 +30,11 @@ def rename_file(filepath: Path, prefix: str):
         return True
     return False
 
+
 def rename_and_prefix(dataset_dir: Path, num_workers: int):
     prefix = dataset_dir.parent.name
     logging.info(f"Prefixing files in {dataset_dir} with '{prefix}_'...")
-    
+
     all_files = []
     for subdir in SUBDIRS:
         dir_path = dataset_dir / subdir
@@ -42,10 +44,15 @@ def rename_and_prefix(dataset_dir: Path, num_workers: int):
     count = 0
     rename_func = partial(rename_file, prefix=prefix)
     with multiprocessing.Pool(num_workers) as pool:
-        for changed in tqdm(pool.imap_unordered(rename_func, all_files), total=len(all_files), desc=f"Renaming {prefix}"):
+        for changed in tqdm(
+            pool.imap_unordered(rename_func, all_files),
+            total=len(all_files),
+            desc=f"Renaming {prefix}",
+        ):
             if changed:
                 count += 1
     logging.info(f"Renamed {count} files in {dataset_dir}.")
+
 
 def move_file(args):
     """Worker function to move a single file."""
@@ -55,18 +62,29 @@ def move_file(args):
     shutil.move(str(filepath), str(target_filepath))
     return True, ""
 
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Merge two training datasets.")
     parser.add_argument(
-        "--target-dataset", type=Path, required=True, help="Path to the target dataset directory."
+        "--target-dataset",
+        type=Path,
+        required=True,
+        help="Path to the target dataset directory.",
     )
     parser.add_argument(
-        "--source-dataset", type=Path, required=True, help="Path to the source dataset directory."
+        "--source-dataset",
+        type=Path,
+        required=True,
+        help="Path to the source dataset directory.",
     )
     parser.add_argument(
-        "--workers", type=int, default=max(1, multiprocessing.cpu_count() - 1), help="Number of worker processes."
+        "--workers",
+        type=int,
+        default=max(1, multiprocessing.cpu_count() - 1),
+        help="Number of worker processes.",
     )
     return parser.parse_args()
+
 
 def main():
     args = parse_arguments()
@@ -101,7 +119,11 @@ def main():
 
     moved_count = 0
     with multiprocessing.Pool(args.workers) as pool:
-        for success, msg in tqdm(pool.imap_unordered(move_file, move_tasks), total=len(move_tasks), desc="Moving files"):
+        for success, msg in tqdm(
+            pool.imap_unordered(move_file, move_tasks),
+            total=len(move_tasks),
+            desc="Moving files",
+        ):
             if success:
                 moved_count += 1
             elif msg:
@@ -109,6 +131,7 @@ def main():
 
     logging.info(f"Moved {moved_count} files.")
     logging.info("Merge complete.")
+
 
 if __name__ == "__main__":
     main()
