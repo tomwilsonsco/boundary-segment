@@ -144,7 +144,7 @@ It is useful to see statistics per chip on lengths of prediction TP, FP, FN and 
 
 This can be used to rank chips and review ones with a low F1 to discern chips with non-visible boundary lines (not benefitting training), from difficult to predict lines but that could be predicted by refining model training.
 
-The `unet/chip_metrics.py` process adds these stats per chip to a copy of the index layer. Make sure to have used the `--create-index-layer` option of `utils/chip_image.py`.
+The `unet/chip_metrics.py` process adds these stats per chip to a copy of the index layer.
 
 ```bash
 python unet/chip_metrics.py --line-comparison outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch_result_compare.gpkg --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/masks" --chips-index "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index.gpkg" --dataset-dir inputs/images/gretna/dataset
