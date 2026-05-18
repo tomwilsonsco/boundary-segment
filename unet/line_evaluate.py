@@ -183,21 +183,7 @@ def main(args):
     _, fn_geoms = split_by_local_union(parcel_lines, pred_buffers, crs)
     fn_gdf = filter_lines(fn_geoms, crs, "FN")
 
-    print("Combining results...")
-    combined_df = pd.concat([tp_gdf, fp_gdf, fn_gdf], ignore_index=True)
-    result_gdf = gpd.GeoDataFrame(combined_df, geometry="geometry", crs=crs)
-
-    print("Exploding multi-part geometries...")
-    result_gdf = result_gdf.explode(index_parts=False).reset_index(drop=True)
-
-    output_gpkg = args.pred_gpkg.parent / f"{args.pred_gpkg.stem}_result_compare.gpkg"
-    print(f"Saving evaluated lines to {output_gpkg}...")
-    output_gpkg.parent.mkdir(parents=True, exist_ok=True)
-
-    if output_gpkg.exists():
-        output_gpkg.unlink()
-    result_gdf.to_file(output_gpkg, driver="GPKG")
-
+    # Compute metrics from individual GDFs before any memory-intensive write
     tp_len = tp_gdf.geometry.length.sum()
     fp_len = fp_gdf.geometry.length.sum()
     fn_len = fn_gdf.geometry.length.sum()
@@ -239,6 +225,32 @@ def main(args):
         f.write("\n".join(results_text) + "\n")
 
     print(f"Results appended to {log_file}")
+
+    # Write output in chunks, one component at a time, to avoid OOM from a
+    # single large concat + to_file call.
+    output_gpkg = args.pred_gpkg.parent / f"{args.pred_gpkg.stem}_result_compare.gpkg"
+    print(f"Saving evaluated lines to {output_gpkg}...")
+    output_gpkg.parent.mkdir(parents=True, exist_ok=True)
+    if output_gpkg.exists():
+        output_gpkg.unlink()
+
+    CHUNK_SIZE = 50_000
+    first_write = True
+    print("Combining results and writing in chunks...")
+    for label, part_gdf in [("TP", tp_gdf), ("FP", fp_gdf), ("FN", fn_gdf)]:
+        exploded = part_gdf.explode(index_parts=False).reset_index(drop=True)
+        n = len(exploded)
+        for i in range(0, n, CHUNK_SIZE):
+            chunk = exploded.iloc[i : i + CHUNK_SIZE]
+            if first_write:
+                chunk.to_file(output_gpkg, driver="GPKG")
+                first_write = False
+            else:
+                chunk.to_file(output_gpkg, driver="GPKG", mode="a")
+        print(f"  {label}: wrote {n:,} features")
+        del exploded
+
+    print(f"Done. Output saved to {output_gpkg}")
 
 
 if __name__ == "__main__":
