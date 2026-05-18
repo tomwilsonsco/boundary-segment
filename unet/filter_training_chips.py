@@ -43,7 +43,7 @@ def main():
         "--min-training-length",
         type=float,
         default=30.0,
-        help="Minimum total true boundary length in metres. Chips below this are 'corner_clippers'. Default: 10.0",
+        help="Minimum total true boundary length in metres. Chips below this are 'corner_clippers'. Default: 30.0",
     )
     parser.add_argument(
         "--invisible-boundary-max",
