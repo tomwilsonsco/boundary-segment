@@ -446,8 +446,11 @@ def main(args):
                     f"Resuming from epoch {start_epoch} with best val loss: {best_val_loss:.4f}"
                 )
                 print(f"Will save to new checkpoint: {checkpoint_path}\n")
+            elif isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+                model.load_state_dict(checkpoint["state_dict"])
+                print("Loaded model weights only (from inference model file).")
+                print("Optimizer, learning rate, and epochs will start from scratch.\n")
             else:
-                # Old format - just model weights
                 model.load_state_dict(checkpoint)
                 print("Loaded model weights only (old format - no optimizer state)")
                 print("Warning: Optimizer will restart from scratch\n")
