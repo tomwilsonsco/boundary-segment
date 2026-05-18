@@ -7,6 +7,28 @@ import pandas as pd
 from tqdm import tqdm
 
 
+def calculate_f1_from_mean_pr(df):
+    """
+    Calculates F1 score from the mean of precision and recall columns.
+    This is a macro-average F1.
+    """
+    # Drop chips where precision/recall are NaN to avoid skewing the mean.
+    # This happens for chips with no ground truth lines and no predictions.
+    valid_df = df.dropna(subset=["precision", "recall"])
+    if valid_df.empty:
+        return 0.0, 0.0, 0.0
+
+    mean_precision = valid_df["precision"].mean()
+    mean_recall = valid_df["recall"].mean()
+
+    if (mean_precision + mean_recall) == 0:
+        f1 = 0.0
+    else:
+        f1 = 2 * (mean_precision * mean_recall) / (mean_precision + mean_recall)
+
+    return mean_precision, mean_recall, f1
+
+
 def parse_arguments(args=None):
     """Set up and parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -204,23 +226,27 @@ def main(args):
         print("Mean Metrics per Chip")
         print("=" * 40)
 
-        valid_gdf = gdf.dropna(subset=["f1_score"])
-
         print("Overall:")
-        print(f"  Precision: {valid_gdf['precision'].mean():.4f}")
-        print(f"  Recall:    {valid_gdf['recall'].mean():.4f}")
-        print(f"  F1 Score:  {valid_gdf['f1_score'].mean():.4f}")
+        # The gdf contains per-chip metrics. We will average them.
+        # Chips with no GT and no predictions will have NaN metrics, and should be
+        # excluded from the mean. The helper function handles this.
+        p, r, f1 = calculate_f1_from_mean_pr(gdf)
+        print(f"  Precision: {p:.4f}")
+        print(f"  Recall:    {r:.4f}")
+        print(f"  F1 Score:  {f1:.4f}")
 
-        if args.dataset_dir:
+        if args.dataset_dir and "dataset_split" in gdf.columns:
             print("\nBy Dataset Split:")
-            grouped = valid_gdf.groupby("dataset_split")[
-                ["precision", "recall", "f1_score"]
-            ].mean()
-            for split, row in grouped.iterrows():
-                print(f"  {split.upper()}:")
-                print(f"    Precision: {row['precision']:.4f}")
-                print(f"    Recall:    {row['recall']:.4f}")
-                print(f"    F1 Score:  {row['f1_score']:.4f}")
+            # Get unique splits and sort them for consistent output order
+            splits = sorted(gdf["dataset_split"].unique())
+            for split in splits:
+                split_gdf = gdf[gdf["dataset_split"] == split]
+                if not split_gdf.empty:
+                    p, r, f1 = calculate_f1_from_mean_pr(split_gdf)
+                    print(f"  {split.upper()}:")
+                    print(f"    Precision: {p:.4f}")
+                    print(f"    Recall:    {r:.4f}")
+                    print(f"    F1 Score:  {f1:.4f}")
         print("=" * 40 + "\n")
 
 
