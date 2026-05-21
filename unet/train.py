@@ -337,6 +337,7 @@ def main(args):
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=True,
+        prefetch_factor=4,
         worker_init_fn=_seed_worker if args.seed is not None else None,
         generator=generator if args.seed is not None else None,
     )
@@ -347,6 +348,7 @@ def main(args):
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=True,
+        prefetch_factor=4,
         worker_init_fn=_seed_worker if args.seed is not None else None,
     )
 
@@ -380,8 +382,8 @@ def main(args):
     model.to(DEVICE)
 
     if args.compile and DEVICE == "cuda":
-        print("Compiling model with torch.compile (default mode)...")
-        model = torch.compile(model, mode="default")
+        print("Compiling model with torch.compile (reduce-overhead mode)...")
+        model = torch.compile(model, mode="reduce-overhead")
         print("Model compiled.")
 
     if args.loss_method == "bce_only":
