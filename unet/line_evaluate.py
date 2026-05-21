@@ -16,7 +16,9 @@ def extract_lines(geom):
     if geom.geom_type in ["LineString", "MultiLineString"]:
         return geom
     if geom.geom_type == "GeometryCollection":
-        lines = [g for g in geom.geoms if g.geom_type in ["LineString", "MultiLineString"]]
+        lines = [
+            g for g in geom.geoms if g.geom_type in ["LineString", "MultiLineString"]
+        ]
         return unary_union(lines) if lines else GeometryCollection()
     return GeometryCollection()
 
@@ -29,16 +31,16 @@ def split_by_local_union(source_geoms, mask_buffers, crs):
     """
     mask_list = list(mask_buffers)
     tree = STRtree(mask_list)
-    
+
     inside_list = []
     outside_list = []
-    
+
     for geom in tqdm(source_geoms, desc="Splitting by local union"):
         if geom is None or geom.is_empty:
             inside_list.append(GeometryCollection())
             outside_list.append(GeometryCollection())
             continue
-            
+
         idxs = tree.query(geom, predicate="intersects")
         if len(idxs):
             local_mask = unary_union([mask_list[i] for i in idxs])
@@ -47,7 +49,7 @@ def split_by_local_union(source_geoms, mask_buffers, crs):
         else:
             inside_list.append(GeometryCollection())
             outside_list.append(geom)
-            
+
     return gpd.GeoSeries(inside_list, crs=crs), gpd.GeoSeries(outside_list, crs=crs)
 
 
@@ -153,19 +155,20 @@ def main(args):
     if parcels_gdf.empty:
         pred_gdf = pred_gdf.iloc[0:0].copy()
     else:
-        parcel_list = list(parcels_gdf.geometry)
-        tree = STRtree(parcel_list)
-        
+        # Buffer parcels by 10 specifically for the clipping process
+        clip_parcel_list = list(parcels_gdf.geometry.buffer(10))
+        tree = STRtree(clip_parcel_list)
+
         clipped_geoms = []
         keep_indices = []
-        
+
         for i, geom in enumerate(tqdm(pred_gdf.geometry, desc="Clipping lines")):
             if geom is None or geom.is_empty:
                 continue
-            
+
             idxs = tree.query(geom, predicate="intersects")
             if len(idxs) > 0:
-                local_mask = unary_union([parcel_list[idx] for idx in idxs])
+                local_mask = unary_union([clip_parcel_list[idx] for idx in idxs])
                 clipped_geom = extract_lines(geom.intersection(local_mask))
                 if not clipped_geom.is_empty:
                     clipped_geoms.append(clipped_geom)
@@ -175,7 +178,9 @@ def main(args):
         pred_gdf = pred_gdf.set_geometry(
             gpd.GeoSeries(clipped_geoms, index=pred_gdf.index, crs=crs)
         )
-        pred_gdf = pred_gdf[pred_gdf.geom_type.isin(["LineString", "MultiLineString"])].copy()
+        pred_gdf = pred_gdf[
+            pred_gdf.geom_type.isin(["LineString", "MultiLineString"])
+        ].copy()
 
     if not args.imgs_dir.exists():
         raise FileNotFoundError(f"Image directory not found: {args.imgs_dir}")
