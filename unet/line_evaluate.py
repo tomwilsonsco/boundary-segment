@@ -5,41 +5,50 @@ import geopandas as gpd
 import pandas as pd
 import rasterio as rio
 from shapely.geometry import GeometryCollection, box
-from shapely.ops import unary_union, substring
+from shapely.ops import unary_union, substring, linemerge
 from shapely.strtree import STRtree
 from tqdm import tqdm
+
+
+def extract_lines(geom):
+    if geom is None or geom.is_empty:
+        return GeometryCollection()
+    if geom.geom_type in ["LineString", "MultiLineString"]:
+        return geom
+    if geom.geom_type == "GeometryCollection":
+        lines = [g for g in geom.geoms if g.geom_type in ["LineString", "MultiLineString"]]
+        return unary_union(lines) if lines else GeometryCollection()
+    return GeometryCollection()
 
 
 def split_by_local_union(source_geoms, mask_buffers, crs):
     """
     For each geometry in source_geoms, query an STRtree built from
-    mask_buffers to find only the nearby buffers, union just those
-    locally, then split the source geometry into inside/outside portions.
+    mask_buffers. Find intersecting masks, union them, and compute
+    intersection/difference for the line.
     """
     mask_list = list(mask_buffers)
     tree = STRtree(mask_list)
-
+    
     inside_list = []
     outside_list = []
-
+    
     for geom in tqdm(source_geoms, desc="Splitting by local union"):
         if geom is None or geom.is_empty:
             inside_list.append(GeometryCollection())
             outside_list.append(GeometryCollection())
             continue
+            
         idxs = tree.query(geom, predicate="intersects")
         if len(idxs):
             local_mask = unary_union([mask_list[i] for i in idxs])
-            inside_list.append(geom.intersection(local_mask))
-            outside_list.append(geom.difference(local_mask))
+            inside_list.append(extract_lines(geom.intersection(local_mask)))
+            outside_list.append(extract_lines(geom.difference(local_mask)))
         else:
             inside_list.append(GeometryCollection())
             outside_list.append(geom)
-
-    return (
-        gpd.GeoSeries(inside_list, crs=crs),
-        gpd.GeoSeries(outside_list, crs=crs),
-    )
+            
+    return gpd.GeoSeries(inside_list, crs=crs), gpd.GeoSeries(outside_list, crs=crs)
 
 
 def filter_lines(geoseries, crs, label):
@@ -56,6 +65,31 @@ def filter_lines(geoseries, crs, label):
     gdf["pred_result"] = label
 
     return gdf
+
+
+def merge_lines(gdf):
+    """
+    Merge connected line segments within a classification GDF into the longest
+    continuous features possible. Disconnected segments remain separate.
+    """
+    if gdf.empty:
+        return gdf
+    flat = []
+    for geom in gdf.geometry:
+        if geom.geom_type == "LineString":
+            flat.append(geom)
+        elif geom.geom_type == "MultiLineString":
+            flat.extend(geom.geoms)
+    merged = linemerge(flat)
+    label = gdf["pred_result"].iloc[0]
+    crs = gdf.crs
+    if merged.geom_type == "LineString":
+        geoms = [merged]
+    else:
+        geoms = list(merged.geoms)
+    result = gpd.GeoDataFrame(geometry=geoms, crs=crs)
+    result["pred_result"] = label
+    return result
 
 
 def parse_arguments(args=None):
@@ -88,6 +122,12 @@ def parse_arguments(args=None):
         default=3.0,
         help="Buffer distance for line evaluation in CRS units (e.g. metres). Default: 3.0.",
     )
+    parser.add_argument(
+        "--max-parcel-area",
+        type=float,
+        default=5e5,
+        help="Maximum parcel area in CRS units. Parcels larger than this are ignored. Default: 5e5.",
+    )
 
     return parser.parse_args(args)
 
@@ -102,6 +142,40 @@ def main(args):
     parcels_gdf = gpd.read_file(args.parcels)
 
     crs = pred_gdf.crs
+
+    if parcels_gdf.crs != crs:
+        parcels_gdf = parcels_gdf.to_crs(crs)
+
+    print(f"Filtering parcels by area <= {args.max_parcel_area}...")
+    parcels_gdf = parcels_gdf[parcels_gdf.geometry.area <= args.max_parcel_area]
+
+    print("Clipping prediction lines by area filtered parcels...")
+    if parcels_gdf.empty:
+        pred_gdf = pred_gdf.iloc[0:0].copy()
+    else:
+        parcel_list = list(parcels_gdf.geometry)
+        tree = STRtree(parcel_list)
+        
+        clipped_geoms = []
+        keep_indices = []
+        
+        for i, geom in enumerate(tqdm(pred_gdf.geometry, desc="Clipping lines")):
+            if geom is None or geom.is_empty:
+                continue
+            
+            idxs = tree.query(geom, predicate="intersects")
+            if len(idxs) > 0:
+                local_mask = unary_union([parcel_list[idx] for idx in idxs])
+                clipped_geom = extract_lines(geom.intersection(local_mask))
+                if not clipped_geom.is_empty:
+                    clipped_geoms.append(clipped_geom)
+                    keep_indices.append(i)
+
+        pred_gdf = pred_gdf.iloc[keep_indices].copy()
+        pred_gdf = pred_gdf.set_geometry(
+            gpd.GeoSeries(clipped_geoms, index=pred_gdf.index, crs=crs)
+        )
+        pred_gdf = pred_gdf[pred_gdf.geom_type.isin(["LineString", "MultiLineString"])].copy()
 
     if not args.imgs_dir.exists():
         raise FileNotFoundError(f"Image directory not found: {args.imgs_dir}")
@@ -133,8 +207,6 @@ def main(args):
     if index_gdf.empty:
         raise ValueError("Chips index is empty. Cannot determine evaluation extent.")
 
-    if parcels_gdf.crs != crs:
-        parcels_gdf = parcels_gdf.to_crs(crs)
     if index_gdf.crs != crs:
         index_gdf = index_gdf.to_crs(crs)
 
@@ -168,8 +240,8 @@ def main(args):
 
     print("Splitting prediction lines (True Positives / False Positives)...")
     tp_geoms, fp_geoms = split_by_local_union(pred_gdf.geometry, parcel_buffers, crs)
-    tp_gdf = filter_lines(tp_geoms, crs, "TP")
-    fp_gdf = filter_lines(fp_geoms, crs, "FP")
+    tp_gdf = merge_lines(filter_lines(tp_geoms, crs, "TP"))
+    fp_gdf = merge_lines(filter_lines(fp_geoms, crs, "FP"))
 
     # FN
     print("Exploding and simplifying prediction lines...")
@@ -181,7 +253,7 @@ def main(args):
     pred_buffers = simplified_pred_lines.buffer(args.buffer_dist, resolution=4)
     print("Evaluating ground truth lines for False Negatives (FN)...")
     _, fn_geoms = split_by_local_union(parcel_lines, pred_buffers, crs)
-    fn_gdf = filter_lines(fn_geoms, crs, "FN")
+    fn_gdf = merge_lines(filter_lines(fn_geoms, crs, "FN"))
 
     # Compute metrics from individual GDFs before any memory-intensive write
     tp_len = tp_gdf.geometry.length.sum()
