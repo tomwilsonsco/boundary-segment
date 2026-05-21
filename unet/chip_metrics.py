@@ -173,7 +173,7 @@ def main(args):
                     fn_len = clipped[
                         clipped["pred_result"] == "FN"
                     ].geometry.length.sum()
-                    
+
                     if (tp_len + fp_len + fn_len) > 0:
                         has_features = True
 
