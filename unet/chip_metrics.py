@@ -156,6 +156,7 @@ def main(args):
             tp_len = 0.0
             fp_len = 0.0
             fn_len = 0.0
+            has_features = False
 
             possible_matches_idx = list(lines_sindex.intersection(geom.bounds))
             if possible_matches_idx:
@@ -172,6 +173,13 @@ def main(args):
                     fn_len = clipped[
                         clipped["pred_result"] == "FN"
                     ].geometry.length.sum()
+                    
+                    if (tp_len + fp_len + fn_len) > 0:
+                        has_features = True
+
+            if not has_features:
+                gdf.loc[gdf["file_name"] == file_name, "is_background_only"] = True
+                continue
 
             precision = tp_len / (tp_len + fp_len) if (tp_len + fp_len) > 0 else 0.0
             recall = tp_len / (tp_len + fn_len) if (tp_len + fn_len) > 0 else 0.0
