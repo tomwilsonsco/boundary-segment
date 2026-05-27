@@ -1,6 +1,8 @@
 numpy
 pandas
 rasterio
+gdal
+scipy
 geopandas
 shapely
 black

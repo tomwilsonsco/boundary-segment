@@ -1,5 +1,7 @@
 import os
+import random
 import torch
+import numpy as np
 from torch.utils.data import DataLoader, Dataset
 import cv2
 import segmentation_models_pytorch as smp
@@ -124,6 +126,21 @@ def parse_arguments(args=None):
         "Default: inputs/images/dataset.",
     )
 
+    parser.add_argument(
+        "--loss-method",
+        type=str,
+        default="focal_dice",
+        choices=["focal_dice", "bce_dice", "bce_only"],
+        help="Loss function combination to use. Default: focal_dice.",
+    )
+    parser.add_argument(
+        "--pos-weight",
+        type=float,
+        default=10.0,
+        help="Positive class weight for BCE loss (bce_dice and bce_only). "
+        "Set to approx. background_pixels / boundary_pixels ratio. Default: 10.0.",
+    )
+
     # model
     parser.add_argument(
         "--arch",
@@ -219,17 +236,45 @@ def parse_arguments(args=None):
         default=False,
         help="Use BF16 mixed precision instead of FP16. Recommended for Ada/Ampere+ GPUs.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducibility. Sets Python, NumPy, and PyTorch seeds. "
+        "Also disables cuDNN benchmarking to ensure deterministic op selection. "
+        "Omit to use a non-deterministic run (faster on GPU).",
+    )
 
     return parser.parse_args(args)
+
+
+def _seed_worker(worker_id):
+    """Ensure each DataLoader worker gets a unique but deterministic seed."""
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 def main(args):
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+    # Seeding — must happen before model init, DataLoader creation, etc.
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        print(
+            f"Seed set to {args.seed} (deterministic mode enabled, cuDNN benchmarking disabled)"
+        )
+
     if torch.cuda.is_available():
-        torch.backends.cudnn.benchmark = True
+        if args.seed is None:
+            torch.backends.cudnn.benchmark = True
+            print("cuDNN benchmarking enabled")
         torch.set_float32_matmul_precision("high")
-        print("cuDNN benchmarking enabled")
         print("TF32 matmul precision enabled")
 
     # ensure output directory exists
@@ -281,6 +326,10 @@ def main(args):
 
     print(f"Using {num_workers} workers for data loading.")
 
+    generator = torch.Generator()
+    if args.seed is not None:
+        generator.manual_seed(args.seed)
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -288,6 +337,9 @@ def main(args):
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=True,
+        prefetch_factor=4,
+        worker_init_fn=_seed_worker if args.seed is not None else None,
+        generator=generator if args.seed is not None else None,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -296,6 +348,8 @@ def main(args):
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=True,
+        prefetch_factor=4,
+        worker_init_fn=_seed_worker if args.seed is not None else None,
     )
 
     print(
@@ -328,12 +382,27 @@ def main(args):
     model.to(DEVICE)
 
     if args.compile and DEVICE == "cuda":
-        print("Compiling model with torch.compile (default mode)...")
-        model = torch.compile(model, mode="default")
+        print("Compiling model with torch.compile (reduce-overhead mode)...")
+        model = torch.compile(model, mode="reduce-overhead")
         print("Model compiled.")
 
-    dice_loss = smp.losses.DiceLoss(mode="binary", from_logits=True)
-    focal_loss = smp.losses.FocalLoss(mode="binary", alpha=0.75, gamma=2.0)
+    if args.loss_method == "bce_only":
+        print(f"Using loss method: BCE only (pos_weight={args.pos_weight})")
+        bce_only_loss = smp.losses.SoftBCEWithLogitsLoss(
+            pos_weight=torch.tensor([args.pos_weight]).to(DEVICE)
+        )
+        dice_loss = None
+        secondary_loss = None
+    else:
+        dice_loss = smp.losses.DiceLoss(mode="binary", from_logits=True)
+        if args.loss_method == "bce_dice":
+            print(f"Using loss method: BCE + Dice (pos_weight={args.pos_weight})")
+            secondary_loss = smp.losses.SoftBCEWithLogitsLoss(
+                pos_weight=torch.tensor([args.pos_weight]).to(DEVICE)
+            )
+        else:
+            print("Using loss method: Focal + Dice")
+            secondary_loss = smp.losses.FocalLoss(mode="binary", alpha=0.85, gamma=1.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
 
     # Add learning rate scheduler
@@ -379,8 +448,11 @@ def main(args):
                     f"Resuming from epoch {start_epoch} with best val loss: {best_val_loss:.4f}"
                 )
                 print(f"Will save to new checkpoint: {checkpoint_path}\n")
+            elif isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+                model.load_state_dict(checkpoint["state_dict"])
+                print("Loaded model weights only (from inference model file).")
+                print("Optimizer, learning rate, and epochs will start from scratch.\n")
             else:
-                # Old format - just model weights
                 model.load_state_dict(checkpoint)
                 print("Loaded model weights only (old format - no optimizer state)")
                 print("Warning: Optimizer will restart from scratch\n")
@@ -429,7 +501,10 @@ def main(args):
 
             with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
                 logits = model(images)
-                loss = dice_loss(logits, masks) + focal_loss(logits, masks)
+                if args.loss_method == "bce_only":
+                    loss = bce_only_loss(logits, masks)
+                else:
+                    loss = dice_loss(logits, masks) + secondary_loss(logits, masks)
                 loss = loss / args.accum_steps
 
             scaler.scale(loss).backward()
@@ -458,7 +533,10 @@ def main(args):
                 # mixed precision validation
                 with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
                     logits = model(images)
-                    loss = dice_loss(logits, masks) + focal_loss(logits, masks)
+                    if args.loss_method == "bce_only":
+                        loss = bce_only_loss(logits, masks)
+                    else:
+                        loss = dice_loss(logits, masks) + secondary_loss(logits, masks)
 
                 val_loss += loss.item()
                 val_loop.set_postfix(loss=loss.item())
@@ -494,6 +572,8 @@ def main(args):
                 "val_losses": val_losses,
                 "arch": args.arch,
                 "encoder": args.encoder,
+                "loss_method": args.loss_method,
+                "batch_size": args.batch_size,
             }
             torch.save(checkpoint, checkpoint_path)
             # save model weights and config for inference

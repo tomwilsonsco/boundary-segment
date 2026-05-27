@@ -12,6 +12,7 @@ import torch
 import cv2
 import numpy as np
 import rasterio
+from scipy.ndimage import convolve
 from rasterio.windows import Window
 from rasterio.transform import Affine
 from osgeo import gdal
@@ -135,7 +136,6 @@ def load_model(model_path, device):
 class ChipInferenceDataset(torch.utils.data.Dataset):
     """
     Minimal Dataset for inference — reads chips and returns tensor + profile metadata.
-    Storing the profile per-chip is cheap (it's just a small dict).
     """
 
     def __init__(self, chip_files, transform):
@@ -173,14 +173,15 @@ class ChipInferenceDataset(torch.utils.data.Dataset):
         return img_tensor, str(chip_path), trans_tuple, crs_str, True
 
 
-def _writer_worker(write_queue, input_dir, temp_dir):
+def _writer_worker(write_queue, temp_dir):
     """
-    Runs in a background thread — drains (prob_map, chip_path) pairs from
+    Runs in a background thread uses (prob_map, chip_path) pairs from
     the queue and writes GeoTIFF prediction files without blocking inference.
     """
     while True:
         item = write_queue.get()
         if item is None:  # sentinel: inference is done
+            write_queue.put(None)  # Pass poison pill to next worker
             break
         prob_map, chip_path_str, trans_tuple, crs_str, valid = item
         if not valid:
@@ -211,7 +212,9 @@ def _writer_worker(write_queue, input_dir, temp_dir):
         write_queue.task_done()
 
 
-def predict_chips(model, input_dir, temp_dir, device, batch_size=32, num_workers=4):
+def predict_chips(
+    model, input_dir, temp_dir, device, batch_size=32, num_workers=4, use_tta=False
+):
     """
     Run batched inference on all chips in input_dir and save to temp_dir.
 
@@ -244,12 +247,14 @@ def predict_chips(model, input_dir, temp_dir, device, batch_size=32, num_workers
 
     # Background writer thread — decouples GPU inference from disk writes
     write_queue = queue.Queue(maxsize=batch_size * 4)
-    writer_thread = threading.Thread(
-        target=_writer_worker,
-        args=(write_queue, input_dir, temp_dir),
-        daemon=True,
-    )
-    writer_thread.start()
+    num_writers = 3
+    writer_threads = []
+    for _ in range(num_writers):
+        t = threading.Thread(
+            target=_writer_worker, args=(write_queue, temp_dir), daemon=True
+        )
+        t.start()
+        writer_threads.append(t)
 
     output_files = []
     use_amp = device == "cuda"
@@ -261,8 +266,25 @@ def predict_chips(model, input_dir, temp_dir, device, batch_size=32, num_workers
             img_tensors = img_tensors.to(device, non_blocking=True)
 
             with torch.amp.autocast(device, enabled=use_amp):
-                logits = model(img_tensors)
-                prob_maps = torch.sigmoid(logits).squeeze(1).cpu().numpy()
+                if use_tta:
+                    # Original prediction
+                    logits1 = model(img_tensors)
+                    probs1 = torch.sigmoid(logits1)
+
+                    # 180 degree rotated prediction (k=2)
+                    imgs_rot = torch.rot90(img_tensors, 2, [2, 3])
+                    logits2 = model(imgs_rot)
+                    probs2 = torch.sigmoid(logits2)
+
+                    # Un-rotate
+                    probs2_unrot = torch.rot90(probs2, -2, [2, 3])
+
+                    # Take the element-wise maximum
+                    probs_max = torch.maximum(probs1, probs2_unrot)
+                    prob_maps = probs_max.squeeze(1).cpu().numpy()
+                else:
+                    logits = model(img_tensors)
+                    prob_maps = torch.sigmoid(logits).squeeze(1).cpu().numpy()
                 # squeeze(1): (B,1,H,W) -> (B,H,W)
 
             # Iterate through batch
@@ -283,65 +305,146 @@ def predict_chips(model, input_dir, temp_dir, device, batch_size=32, num_workers
 
     # Signal writer to finish and wait for all writes to complete
     write_queue.put(None)
-    writer_thread.join()
+    for t in writer_threads:
+        t.join()
 
     return output_files
 
 
-def build_vrt(vrt_path, input_files):
-    """Build a VRT from a list of input files."""
-    print(f"Building VRT from {len(input_files)} files...")
+def _build_vrt_worker(args):
+    vrt_path, input_files = args
     try:
         options = gdal.BuildVRTOptions(
             resampleAlg=gdal.GRA_NearestNeighbour, resolution="highest"
         )
         input_strs = [str(f) for f in input_files]
         gdal.BuildVRT(str(vrt_path), input_strs, options=options)
+        return str(vrt_path)
+    except Exception as e:
+        print(f"Worker VRT error: {e}")
+        return None
+
+
+def build_vrt(vrt_path, input_files):
+    """Build a VRT from a list of input files."""
+    print(f"Building VRT from {len(input_files)} files...")
+
+    if len(input_files) < 2000:
+        try:
+            options = gdal.BuildVRTOptions(
+                resampleAlg=gdal.GRA_NearestNeighbour, resolution="highest"
+            )
+            input_strs = [str(f) for f in input_files]
+            gdal.BuildVRT(str(vrt_path), input_strs, options=options)
+            return True
+        except Exception as e:
+            print(f"Error building VRT: {e}")
+            return False
+
+    # For massive datasets, parallelise the I/O bottleneck of reading thousands of TIFF headers
+    chunk_size = 2000
+    chunks = [
+        input_files[i : i + chunk_size] for i in range(0, len(input_files), chunk_size)
+    ]
+
+    # Place intermediate VRTs alongside the input predictions for automatic cleanup
+    temp_dir = Path(input_files[0]).parent / "temp_vrts"
+    temp_dir.mkdir(exist_ok=True)
+
+    worker_args = []
+    for i, chunk in enumerate(chunks):
+        temp_vrt = temp_dir / f"chunk_{i}.vrt"
+        worker_args.append((temp_vrt, chunk))
+
+    print(
+        f"Splitting VRT generation into {len(chunks)} chunks across multiple CPU cores..."
+    )
+    try:
+        intermediate_vrts = []
+        num_workers = max(1, multiprocessing.cpu_count() - 2)
+        with multiprocessing.Pool(num_workers) as pool:
+            for res in pool.imap_unordered(_build_vrt_worker, worker_args):
+                if res:
+                    intermediate_vrts.append(res)
+
+        print("Merging intermediate VRTs into final mosaic...")
+        options = gdal.BuildVRTOptions(
+            resampleAlg=gdal.GRA_NearestNeighbour, resolution="highest"
+        )
+        gdal.BuildVRT(str(vrt_path), intermediate_vrts, options=options)
+
         return True
     except Exception as e:
         print(f"Error building VRT: {e}")
         return False
 
 
-def skeleton_to_lines(skeleton, transform, min_contour_length=5):
-    """Convert skeletonized binary mask to vector LineStrings."""
-    contours, _ = cv2.findContours(skeleton, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    lines = []
-
-    print(f"Vectorizing {len(contours)} detected segments...")
-
-    for cnt in tqdm(contours, desc="Vectorizing"):
-        if len(cnt) < min_contour_length:
-            continue
-        coords_pix = cnt.squeeze().astype(float)
-        if len(coords_pix.shape) != 2:
-            continue
-
-        coords_map = []
-        for x_pix, y_pix in coords_pix:
-            x_map, y_map = rasterio.transform.xy(
-                transform, y_pix, x_pix, offset="center"
-            )
-            coords_map.append((x_map, y_map))
-
-        if len(coords_map) >= 2:
-            lines.append(LineString(coords_map))
-
-    return lines
-
-
 def process_chunk_worker(args):
     """Worker function for parallel VRT processing."""
-    vrt_path, col_start, row_start, width, height, chunk_size, threshold = args
+    (
+        vrt_path,
+        col_start,
+        row_start,
+        width,
+        height,
+        chunk_size,
+        threshold,
+        min_contour_length,
+        transform_tuple,
+    ) = args
+    transform = Affine(*transform_tuple)
+
     with suppress_stderr():
         with rasterio.open(vrt_path) as src:
             chunk_height = min(chunk_size, height - row_start)
             chunk_width = min(chunk_size, width - col_start)
             window = Window(col_start, row_start, chunk_width, chunk_height)
             chunk = src.read(1, window=window)
+
+            # Skip empty chunks to save processing time and memory
+            if not np.any(chunk > threshold):
+                return []
+
             binary_chunk = (chunk > threshold).astype(np.uint8)
+
+            # 1. Smooth the mask to prevent hairy spurs
+            kernel_close = np.ones((3, 3), np.uint8)
+            binary_chunk = cv2.morphologyEx(binary_chunk, cv2.MORPH_CLOSE, kernel_close)
+
+            # 2. Skeletonise
             skeleton_chunk = skeletonize(binary_chunk).astype(np.uint8)
-            return (row_start, col_start, chunk_height, chunk_width, skeleton_chunk)
+
+            # 3. Junction breaker: pixels with >2 connected neighbours are branch points.
+            # Convolve with a flat 3x3 kernel — each skeleton pixel accumulates itself + neighbours.
+            # Sum > 3 means the pixel (value 1) has 3+ skeleton neighbours, i.e. it is a junction.
+            neighbors = convolve(
+                skeleton_chunk, np.ones((3, 3), dtype=np.uint8), mode="constant", cval=0
+            )
+            junctions = (neighbors > 3) & (skeleton_chunk == 1)
+            skeleton_chunk[junctions] = 0
+
+            contours, _ = cv2.findContours(
+                skeleton_chunk, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
+            )
+
+            chunk_lines = []
+            for cnt in contours:
+                if len(cnt) < min_contour_length:
+                    continue
+                coords_pix = cnt.squeeze().astype(float)
+                if len(coords_pix.shape) != 2:
+                    continue
+
+                # Vectorized affine transformation relative to VRT start
+                xs = coords_pix[:, 0] + col_start
+                ys = coords_pix[:, 1] + row_start
+                xs_map, ys_map = transform * (xs + 0.5, ys + 0.5)
+                coords_map = np.column_stack((xs_map, ys_map))
+
+                if len(coords_map) >= 2:
+                    chunk_lines.append(coords_map)
+
+            return chunk_lines
 
 
 def process_vrt_to_lines(
@@ -358,9 +461,6 @@ def process_vrt_to_lines(
 
         print(f"Mosaic dimensions: {width} x {height} pixels")
 
-        # initialize full mask array (uint8 is efficient)
-        full_skeleton = np.zeros((height, width), dtype=np.uint8)
-
         # calculate number of chunks
         n_chunks_x = int(np.ceil(width / chunk_size))
         n_chunks_y = int(np.ceil(height / chunk_size))
@@ -368,6 +468,14 @@ def process_vrt_to_lines(
 
         # Prepare arguments for parallel processing
         chunk_args = []
+        transform_tuple = (
+            transform.a,
+            transform.b,
+            transform.c,
+            transform.d,
+            transform.e,
+            transform.f,
+        )
         for row_start in range(0, height, chunk_size):
             for col_start in range(0, width, chunk_size):
                 chunk_args.append(
@@ -379,29 +487,60 @@ def process_vrt_to_lines(
                         height,
                         chunk_size,
                         threshold,
+                        min_contour_length,
+                        transform_tuple,
                     )
                 )
 
+        lines = []
         num_workers = max(1, multiprocessing.cpu_count() - 2)
         print(
             f"Processing in {chunk_size}x{chunk_size} chunks with {num_workers} workers..."
         )
 
         with multiprocessing.Pool(num_workers) as pool:
-            for result in tqdm(
+            for result_lines in tqdm(
                 pool.imap_unordered(process_chunk_worker, chunk_args),
                 total=len(chunk_args),
-                desc="Skeletonizing",
+                desc="Skeletonizing & Vectorizing",
             ):
-                r, c, h, w, skel = result
-                full_skeleton[r : r + h, c : c + w] = skel
-
-        print("Converting skeleton to vector lines...")
-        lines = skeleton_to_lines(
-            full_skeleton, transform, min_contour_length=min_contour_length
-        )
+                for coords_map in result_lines:
+                    lines.append(LineString(coords_map))
 
         return lines, crs
+
+
+def extend_line(line, distance=0.5):
+    """
+    Extends a Shapely LineString at both ends by a specified distance.
+    It calculates the trajectory of the first and last segments to ensure
+    the extension is a straight continuation of the line.
+    """
+    if line is None or line.is_empty or len(line.coords) < 2:
+        return line
+
+    coords = list(line.coords)
+
+    p1_start = np.array(coords[0])
+    p2_start = np.array(coords[1])
+    vector_start = p1_start - p2_start
+    length_start = np.linalg.norm(vector_start)
+    new_start = (
+        p1_start + (vector_start / length_start) * distance
+        if length_start > 0
+        else p1_start
+    )
+
+    p1_end = np.array(coords[-2])
+    p2_end = np.array(coords[-1])
+    vector_end = p2_end - p1_end
+    length_end = np.linalg.norm(vector_end)
+    new_end = (
+        p2_end + (vector_end / length_end) * distance if length_end > 0 else p2_end
+    )
+
+    new_coords = [tuple(new_start)] + coords + [tuple(new_end)]
+    return LineString(new_coords)
 
 
 def parse_arguments():
@@ -424,6 +563,11 @@ def parse_arguments():
         type=Path,
         default=Path("outputs/predictions"),
         help="Directory to save output GPKG. Default: outputs/predictions",
+    )
+    parser.add_argument(
+        "--tta",
+        action="store_true",
+        help="Enable Test Time Augmentation (180 degree rotation + max pooling).",
     )
     parser.add_argument(
         "--keep-preds",
@@ -460,6 +604,12 @@ def parse_arguments():
         default=4,
         help="DataLoader worker processes for prefetching chips. Default: 4.",
     )
+    parser.add_argument(
+        "--extend-lines",
+        type=float,
+        default=0.5,
+        help="Extend each predicted line at both ends by this distance in metres. Set to 0 to disable. Default: 0.5",
+    )
 
     return parser.parse_args()
 
@@ -467,6 +617,13 @@ def parse_arguments():
 def main():
     args = parse_arguments()
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    if device == "cuda":
+        torch.backends.cudnn.benchmark = (
+            True  # optimal conv kernels for fixed chip size
+        )
+        torch.backends.cuda.matmul.allow_tf32 = True  # Ampere+ free speedup
+        torch.backends.cudnn.allow_tf32 = True
 
     # 1. Setup Paths
     if args.model is None:
@@ -487,22 +644,56 @@ def main():
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     temp_dir = args.output_dir / "temp_preds"
-    temp_dir.mkdir(exist_ok=True)
 
-    # 2. Load Model
-    print(f"Loading model from {args.model}...")
-    model = load_model(args.model, device)
+    use_existing = False
+    if temp_dir.exists() and any(temp_dir.iterdir()):
+        while True:
+            resp = (
+                input(
+                    f"Directory '{temp_dir}' already exists and contains files. Use existing predictions (u) or overwrite (o)? [u/o]: "
+                )
+                .strip()
+                .lower()
+            )
+            if resp in ["u", "o"]:
+                break
+            print("Please enter 'u' to use existing or 'o' to overwrite.")
 
-    # 3. Predict
-    print("Starting inference...")
-    pred_files = predict_chips(
-        model,
-        args.input_dir,
-        temp_dir,
-        device,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-    )
+        if resp == "u":
+            use_existing = True
+            print("Skipping inference, using existing predictions...")
+        else:
+            print("Overwriting existing predictions...")
+            shutil.rmtree(temp_dir)
+            temp_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+    if use_existing:
+        pred_files = list(temp_dir.glob("*.tif"))
+    else:
+        # 2. Load Model
+        print(f"Loading model from {args.model}...")
+        model = load_model(args.model, device)
+
+        if device == "cuda":
+            try:
+                model = torch.compile(model)
+                print("Model compiled with torch.compile()")
+            except Exception as e:
+                print(f"torch.compile() unavailable, skipping: {e}")
+
+        # 3. Predict
+        print("Starting inference...")
+        pred_files = predict_chips(
+            model,
+            args.input_dir,
+            temp_dir,
+            device,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            use_tta=args.tta,
+        )
 
     if not pred_files:
         print("No predictions generated. Exiting.")
@@ -521,7 +712,11 @@ def main():
         min_contour_length=args.min_contour_length,
     )
 
-    # 6. Save Output
+    # 6. Extend lines
+    if args.extend_lines > 0:
+        lines = [extend_line(line, args.extend_lines) for line in lines]
+
+    # 7. Save Output
     if lines:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_name = args.model.stem
@@ -534,7 +729,7 @@ def main():
     else:
         print("No lines detected.")
 
-    # 7. Cleanup
+    # 8. Cleanup
     if not args.keep_preds:
         print("Cleaning up temporary files...")
         shutil.rmtree(temp_dir)

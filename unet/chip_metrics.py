@@ -7,6 +7,27 @@ import pandas as pd
 from tqdm import tqdm
 
 
+def calculate_f1_from_mean_pr(df):
+    """
+    Calculates F1 score from the mean of precision and recall columns.
+    This is a macro-average F1.
+    """
+    # nan skews the mean
+    valid_df = df.dropna(subset=["precision", "recall"])
+    if valid_df.empty:
+        return 0.0, 0.0, 0.0
+
+    mean_precision = valid_df["precision"].mean()
+    mean_recall = valid_df["recall"].mean()
+
+    if (mean_precision + mean_recall) == 0:
+        f1 = 0.0
+    else:
+        f1 = 2 * (mean_precision * mean_recall) / (mean_precision + mean_recall)
+
+    return mean_precision, mean_recall, f1
+
+
 def parse_arguments(args=None):
     """Set up and parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -134,6 +155,7 @@ def main(args):
             tp_len = 0.0
             fp_len = 0.0
             fn_len = 0.0
+            has_features = False
 
             possible_matches_idx = list(lines_sindex.intersection(geom.bounds))
             if possible_matches_idx:
@@ -150,6 +172,13 @@ def main(args):
                     fn_len = clipped[
                         clipped["pred_result"] == "FN"
                     ].geometry.length.sum()
+
+                    if (tp_len + fp_len + fn_len) > 0:
+                        has_features = True
+
+            if not has_features:
+                gdf.loc[gdf["file_name"] == file_name, "is_background_only"] = True
+                continue
 
             precision = tp_len / (tp_len + fp_len) if (tp_len + fp_len) > 0 else 0.0
             recall = tp_len / (tp_len + fn_len) if (tp_len + fn_len) > 0 else 0.0
@@ -204,23 +233,23 @@ def main(args):
         print("Mean Metrics per Chip")
         print("=" * 40)
 
-        valid_gdf = gdf.dropna(subset=["f1_score"])
-
         print("Overall:")
-        print(f"  Precision: {valid_gdf['precision'].mean():.4f}")
-        print(f"  Recall:    {valid_gdf['recall'].mean():.4f}")
-        print(f"  F1 Score:  {valid_gdf['f1_score'].mean():.4f}")
+        p, r, f1 = calculate_f1_from_mean_pr(gdf)
+        print(f"  Precision: {p:.4f}")
+        print(f"  Recall:    {r:.4f}")
+        print(f"  F1 Score:  {f1:.4f}")
 
-        if args.dataset_dir:
+        if args.dataset_dir and "dataset_split" in gdf.columns:
             print("\nBy Dataset Split:")
-            grouped = valid_gdf.groupby("dataset_split")[
-                ["precision", "recall", "f1_score"]
-            ].mean()
-            for split, row in grouped.iterrows():
-                print(f"  {split.upper()}:")
-                print(f"    Precision: {row['precision']:.4f}")
-                print(f"    Recall:    {row['recall']:.4f}")
-                print(f"    F1 Score:  {row['f1_score']:.4f}")
+            splits = sorted(gdf["dataset_split"].unique())
+            for split in splits:
+                split_gdf = gdf[gdf["dataset_split"] == split]
+                if not split_gdf.empty:
+                    p, r, f1 = calculate_f1_from_mean_pr(split_gdf)
+                    print(f"  {split.upper()}:")
+                    print(f"    Precision: {p:.4f}")
+                    print(f"    Recall:    {r:.4f}")
+                    print(f"    F1 Score:  {f1:.4f}")
         print("=" * 40 + "\n")
 
 

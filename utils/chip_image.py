@@ -4,6 +4,7 @@ from tqdm import tqdm
 import rasterio as rio
 from shapely.geometry import box
 import geopandas as gpd
+import pandas as pd
 import shutil
 import argparse
 import sys
@@ -43,11 +44,6 @@ def parse_arguments(args=None):
         default=1,
         help="Whether to resample, e.g downscale chips. Default of 1 will not"
         "downscale, a value of 0.5 would downscale a 0.125m image to 0.25m",
-    )
-    parser.add_argument(
-        "--create-index-layer",
-        action="store_true",
-        help="Create a GPKG index layer of the chips",
     )
     parser.add_argument(
         "--overwrite-output-dir",
@@ -103,19 +99,33 @@ def main(args):
     # generate chips
     image_chipper.chip_image()
 
-    if args.create_index_layer:
-        geoms = []
-        for file_path in tqdm(list(out_dir.glob("*.tif")), desc="building index layer"):
-            with rio.open(file_path) as src:
-                bounds = src.bounds
-                geom = box(*bounds)
-            geoms.append({"geometry": geom, "file_name": file_path.name})
+    geoms = []
+    for file_path in tqdm(list(out_dir.glob("*.tif")), desc="building index layer"):
+        with rio.open(file_path) as src:
+            bounds = src.bounds
+            geom = box(*bounds)
+        geoms.append({"geometry": geom, "file_name": file_path.name})
 
-        if geoms:
-            with rio.open(list(out_dir.glob("*.tif"))[0]) as src:
-                crs = src.crs
-            gdf = gpd.GeoDataFrame(geoms, crs=crs)
-            gdf.to_file(out_dir / "chips_index.gpkg")
+    if geoms:
+        with rio.open(list(out_dir.glob("*.tif"))[0]) as src:
+            crs = src.crs
+        gdf = gpd.GeoDataFrame(geoms, crs=crs)
+        gdf.to_file(out_dir / "chips_index.gpkg")
+
+        with rio.open(vrt_path) as vrt_src:
+            vrt_geom = box(*vrt_src.bounds)
+
+        # Find polygons not entirely within the VRT extent (small buffer for floating point precision)
+        outside_mask = ~gdf.geometry.within(vrt_geom.buffer(0.001))
+        outside_chips = gdf[outside_mask]
+        if not outside_chips.empty:
+            ignore_df = pd.DataFrame(
+                {
+                    "file_name": outside_chips["file_name"],
+                    "remove_condition": "outside image bounds",
+                }
+            )
+            ignore_df.to_csv(out_dir / "chips_ignore.csv", index=False)
 
     if args.sample_scaler:
         scaler = image_chipper.sample_to_scaler(int(1e5))
