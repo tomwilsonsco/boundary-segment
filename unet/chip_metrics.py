@@ -12,8 +12,7 @@ def calculate_f1_from_mean_pr(df):
     Calculates F1 score from the mean of precision and recall columns.
     This is a macro-average F1.
     """
-    # Drop chips where precision/recall are NaN to avoid skewing the mean.
-    # This happens for chips with no ground truth lines and no predictions.
+    # nan skews the mean
     valid_df = df.dropna(subset=["precision", "recall"])
     if valid_df.empty:
         return 0.0, 0.0, 0.0
@@ -235,9 +234,6 @@ def main(args):
         print("=" * 40)
 
         print("Overall:")
-        # The gdf contains per-chip metrics. We will average them.
-        # Chips with no GT and no predictions will have NaN metrics, and should be
-        # excluded from the mean. The helper function handles this.
         p, r, f1 = calculate_f1_from_mean_pr(gdf)
         print(f"  Precision: {p:.4f}")
         print(f"  Recall:    {r:.4f}")
@@ -245,7 +241,6 @@ def main(args):
 
         if args.dataset_dir and "dataset_split" in gdf.columns:
             print("\nBy Dataset Split:")
-            # Get unique splits and sort them for consistent output order
             splits = sorted(gdf["dataset_split"].unique())
             for split in splits:
                 split_gdf = gdf[gdf["dataset_split"] == split]
