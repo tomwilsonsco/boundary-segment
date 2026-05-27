@@ -141,6 +141,7 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 10] Running line evaluation..."
 python unet/line_evaluate.py \
     --pred-gpkg "${PRED_GPKG}" \
     --parcels "${PARCELS_GPKG}" \
+    --imgs-dir "${CHIPS_DIR}" \
     --buffer-dist 3
 
 # Detect line comparison GPKG
@@ -152,7 +153,8 @@ python unet/chip_metrics.py \
     --line-comparison "${COMPARE_GPKG}" \
     --mask-dir "${CHIPS_DIR}/masks" \
     --chips-index "${CHIPS_DIR}/chips_index.gpkg" \
-    --dataset-dir "${DATASET_DIR}"
+    --dataset-dir "${DATASET_DIR}" \
+    --output-gpkg "${CHIPS_DIR}/chips_index_metrics.gpkg"
 
 # 12. Filter training chips
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 12] Filtering training chips..."
