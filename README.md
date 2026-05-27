@@ -80,7 +80,7 @@ python utils/chip_image.py --vrt "inputs/images/gretna/12.5cm Aerial Photo/tiff_
 
 The `--resampling-factor 0.5` is used in this example to downscale the chips at the point of creation from 0.125 m per pixel in the source imagery to 0.25 m, requiring 4 times fewer chips to cover a given extent. The output chip size (512 in this example) accounts for the downscaling and output chips will be 0.25 m per pixel and 512 by 512 pixels. 
 
-Chips that overlap the extent of the VRT are recorded in a chips_ignore.csv in the chips directory. This is used to exclude them from inclusion in training dataset. This csv is added to during [5. Split images and masks](5-create-dataset-for-train- validation-test) and [12. Filtering Chips](#12-filter-training-chips).
+Chips that are not entirely within the extent of the VRT are recorded in a chips_ignore.csv in the chips directory. This is used to exclude them from inclusion in training dataset. This csv is added to during [5. Split images and masks](#5-create-dataset-for-train-validation-test) and [12. Filtering Chips](#12-filter-training-chips).
 
 ## 4. Create masks from land parcel lines
 This will create an equivalent binary mask tif (1 for lines 0 for background) for each input image.
@@ -149,7 +149,7 @@ This can be used to rank chips and review ones with a low F1 to discern chips wi
 The `unet/chip_metrics.py` process adds these stats per chip to a copy of the index layer.
 
 ```bash
-python unet/chip_metrics.py --line-comparison outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch_result_compare.gpkg --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/masks" --chips-index "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index.gpkg" --dataset-dir inputs/images/gretna/dataset
+python unet/chip_metrics.py --line-comparison outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch_result_compare.gpkg --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/masks" --chips-index "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index.gpkg" --dataset-dir inputs/images/gretna/dataset --output-gpkg "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index_metrics.gpkg"
 ```
 
 ## 12. Filter training chips
@@ -159,7 +159,7 @@ To produce a good quality training dataset it can be useful to remove non-useful
 3. "Extra boundary": Chips with low precision. This could be because the training data lines are out of date and new boundaries are seen on the image.
 
 The `chips_ignore.csv` is used to record these chips, along with existing chips that overlap the image extent or are all background, have no boundary lines at all. This allows them to be excluded with a subsequent creation of training dataset. See 
-[5. Split images and masks](5-create-dataset-for-train- validation-test).
+[5. Create dataset for train, validation, test](#5-create-dataset-for-train-validation-test).
 
 ```bash
 python unet/filter_training_chips.py --input-gpkg "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index_metrics.gpkg" --chips-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --min-training-length 30 --recall-min 0.5 --min-precision 0.5
