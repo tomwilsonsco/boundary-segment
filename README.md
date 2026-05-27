@@ -80,13 +80,15 @@ python utils/chip_image.py --vrt "inputs/images/gretna/12.5cm Aerial Photo/tiff_
 
 The `--resampling-factor 0.5` is used in this example to downscale the chips at the point of creation from 0.125 m per pixel in the source imagery to 0.25 m, requiring 4 times fewer chips to cover a given extent. The output chip size (512 in this example) accounts for the downscaling and output chips will be 0.25 m per pixel and 512 by 512 pixels. 
 
+Chips that overlap the extent of the VRT are recorded in a chips_ignore.csv in the chips directory. This is used to exclude them from inclusion in training dataset. This csv is added to during [5. Split images and masks](5-create-dataset-for-train- validation-test) and [12. Filtering Chips](#12-filter-training-chips).
+
 ## 4. Create masks from land parcel lines
 This will create an equivalent binary mask tif (1 for lines 0 for background) for each input image.
 ```bash
 python unet/create_masks.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --shapefile inputs/gretna_parcels.gpkg
 ```
-## 5. Split the chip images and masks into train, validation, test sets
-The process using `rschip.DatasetSplitter()` will check for and not copy image-mask pairs that are all background (0 class only).
+## 5. Create dataset for train, validation, test
+The process using `rschip.DatasetSplitter()` will check for and not copy image-mask pairs that are all background (0 class only). The background only chips are recorded in a `chips_ignore.csv` created in the same directory as the chip files. This can be added to later see [12. Filtering Chips](#12-filter-training-chips).
 
 ```bash
 python unet/split_dataset_train_test.py --image-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/masks" --output-dir inputs/images/gretna
@@ -99,7 +101,7 @@ Many of these args are the default values but included here for info.
 python unet/train.py --help
 
 # running the training
-python unet/train.py --dataset-dir inputs/images/gretna/dataset --arch unetplusplus --encoder efficientnet-b3 --epochs 30 --batch-size 8 --lr 0.0001 --desc test-025m
+python unet/train.py --dataset-dir inputs/images/gretna/dataset --arch unetplusplus --encoder efficientnet-b3 --loss-method bce_dice --epochs 30 --batch-size 8 --lr 0.0001 --desc test-025m
 ```
 
 ## 7. Evaluate model
@@ -149,7 +151,20 @@ The `unet/chip_metrics.py` process adds these stats per chip to a copy of the in
 ```bash
 python unet/chip_metrics.py --line-comparison outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch_result_compare.gpkg --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/masks" --chips-index "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index.gpkg" --dataset-dir inputs/images/gretna/dataset
 ```
- 
+
+## 12. Filter training chips
+To produce a good quality training dataset it can be useful to remove non-useful chips by making an initial prediction using a base model or early stopped model. The types of chips to remove:
+1. "Corner clippers": Chips where a training data boundary line just clips the corner of the chip, otherwise no boundary lines seen in the chip.
+2. "Invisible boundary": Chips with low recall. This could be because the boundary is not visible on the image.
+3. "Extra boundary": Chips with low precision. This could be because the training data lines are out of date and new boundaries are seen on the image.
+
+The `chips_ignore.csv` is used to record these chips, along with existing chips that overlap the image extent or are all background, have no boundary lines at all. This allows them to be excluded with a subsequent creation of training dataset. See 
+[5. Split images and masks](5-create-dataset-for-train- validation-test).
+
+```bash
+python unet/filter_training_chips.py --input-gpkg "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index_metrics.gpkg" --chips-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --min-training-length 30 --recall-min 0.5 --min-precision 0.5
+```
+
 
 # Running full process
 A shell script is included that runs each stage described above for testing. This could be edited for production runs too. In a terminal after `cd` to the repository run:
