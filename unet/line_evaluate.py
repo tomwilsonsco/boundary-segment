@@ -155,7 +155,7 @@ def main(args):
     if parcels_gdf.empty:
         pred_gdf = pred_gdf.iloc[0:0].copy()
     else:
-        # Buffer parcels by 10 specifically for the clipping process
+        # buffer parcels by 10 specifically for the clipping process
         clip_parcel_list = list(parcels_gdf.geometry.buffer(10))
         tree = STRtree(clip_parcel_list)
 
