@@ -34,10 +34,16 @@ def main():
         description="Filter noisy training chips based on evaluation metrics."
     )
     parser.add_argument(
-        "--input-gpkg", type=str, help="Path to the input chip metrics GeoPackage."
+        "--input-gpkg",
+        type=str,
+        required=True,
+        help="Path to the input chip metrics GeoPackage.",
     )
     parser.add_argument(
-        "--chips-dir", type=str, help="Path to chips directory with chips_ignore.csv."
+        "--chips-dir",
+        type=str,
+        required=True,
+        help="Path to chips directory with chips_ignore.csv.",
     )
     parser.add_argument(
         "--min-training-length",
@@ -62,9 +68,6 @@ def main():
 
     input_path = Path(args.input_gpkg)
 
-    if not args.chips_dir:
-        logging.error("Missing required argument: --chips-dir")
-        return
     chips_dir = Path(args.chips_dir)
 
     if not input_path.exists():
