@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import logging
 
-# Set up basic logging
+# set up basic logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
