@@ -10,20 +10,20 @@ logging.basicConfig(
 )
 
 
-def get_removal_condition(row, min_length, max_invis, max_wrong_gt):
+def get_removal_condition(row, min_length, recall_min, min_precision):
     """Evaluates a row against the thresholds and returns a pipe-separated string of reasons."""
     reasons = []
 
-    # Condition 1: Corner-clippers
+    # corner-clippers
     if (row["Total_True_Length"] > 0) and (row["Total_True_Length"] < min_length):
         reasons.append("corner_clipper")
 
-    # Condition 2: Invisible boundaries (High FN / Low Recall)
-    if (row["Total_True_Length"] >= 20) and (row["recall"] < max_invis):
+    # invisible boundaries (high FN / low recall)
+    if (row["Total_True_Length"] >= 20) and (row["recall"] < recall_min):
         reasons.append("missed_or_invisible_boundary")
 
-    # Condition 3: Wrong ground truth (High FP / Low Precision)
-    if (row["FP_length"] >= 20) and (row["precision"] < max_wrong_gt):
+    # extra boundary / incorrect ground truth (high FP / low precision)
+    if (row["FP_length"] >= 20) and (row["precision"] < min_precision):
         reasons.append("extra_boundary")
 
     return " | ".join(reasons) if reasons else None
@@ -46,16 +46,16 @@ def main():
         help="Minimum total true boundary length in metres. Chips below this are 'corner_clippers'. Default: 30.0",
     )
     parser.add_argument(
-        "--invisible-boundary-max",
+        "--recall-min",
         type=float,
-        default=0.1,
-        help="Maximum recall threshold. If recall is below this (and true length >= 20m), it is a 'missed_or_invisible_boundary'. Default: 0.1",
+        default=0.5,
+        help="Minimum recall threshold. If recall is below this (and true length >= 20m), it is recorded as 'missed_or_invisible_boundary'. Default: 0.5",
     )
     parser.add_argument(
-        "--wrong-ground-truth",
+        "--min-precision",
         type=float,
         default=0.2,
-        help="Maximum precision threshold. If precision is below this (and FP length >= 20m), it is 'extra_boundary'. Default: 0.2",
+        help="Minimum precision threshold. If precision is below this (and FP length >= 20m), it is recorded as 'extra_boundary'. Default: 0.2",
     )
 
     args = parser.parse_args()
@@ -78,7 +78,7 @@ def main():
         logging.error(f"Failed to read GeoPackage: {e}")
         return
 
-    # Ensure required columns exist and fill any NaNs (e.g. 0/0 division in precision/recall)
+    # ensure required columns exist and fill any NaNs (e.g. 0/0 division in precision/recall)
     cols_to_check = ["TP_length", "FP_length", "FN_length", "precision", "recall"]
     for col in cols_to_check:
         if col not in gdf.columns:
@@ -86,7 +86,7 @@ def main():
             return
         gdf[col] = pd.to_numeric(gdf[col], errors="coerce").fillna(0)
 
-    # Calculate total ground truth boundary length
+    # calculate total ground truth boundary length
     gdf["Total_True_Length"] = gdf["TP_length"] + gdf["FN_length"]
 
     logging.info("Evaluating chips against thresholds...")
@@ -96,13 +96,13 @@ def main():
         lambda row: get_removal_condition(
             row,
             args.min_training_length,
-            args.invisible_boundary_max,
-            args.wrong_ground_truth,
+            args.recall_min,
+            args.min_precision,
         ),
         axis=1,
     )
 
-    # Filter down to only the chips that triggered a condition
+    # filter to only the chips that triggered a condition
     to_remove = gdf[gdf["remove_condition"].notnull()].copy()
 
     if to_remove.empty:
@@ -116,7 +116,7 @@ def main():
 
     csv_path = chips_dir / "chips_ignore.csv"
 
-    # Handle existing chips_ignore.csv
+    # handle existing chips_ignore.csv - e.g. background only chips
     if csv_path.exists():
         try:
             existing_df = pd.read_csv(csv_path)
@@ -136,17 +136,16 @@ def main():
     else:
         kept_df = pd.DataFrame(columns=["file_name", "remove_condition"])
 
-    # Combine kept rows with new removals
+    # combine kept rows with new removals
     final_df = pd.concat([kept_df, new_removals_df], ignore_index=True)
-    # Drop duplicates, keeping the external conditions first if there's overlap
+    # keep the external conditions first if there's overlap
     final_df = final_df.drop_duplicates(subset=["file_name"], keep="first")
 
-    # Ensure output directory exists
     csv_path.parent.mkdir(parents=True, exist_ok=True)
 
     final_df.to_csv(csv_path, index=False)
 
-    # Summary stats
+    # summary stats
     logging.info(
         f"Successfully identified {len(new_removals_df)} chips for removal based on metrics."
     )
