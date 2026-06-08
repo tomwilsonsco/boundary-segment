@@ -42,7 +42,7 @@ def parse_arguments(args=None):
         "--resampling-factor",
         type=float,
         default=1,
-        help="Whether to resample, e.g downscale chips. Default of 1 will not"
+        help="Whether to resample, e.g downscale chips. Default of 1 will not "
         "downscale, a value of 0.5 would downscale a 0.125m image to 0.25m",
     )
     parser.add_argument(
