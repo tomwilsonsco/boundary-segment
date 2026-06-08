@@ -18,7 +18,7 @@ def parse_arguments(args=None):
     )
     # required arguments
     parser.add_argument(
-        "--image-dir",
+        "--chip-dir",
         type=Path,
         required=True,
         help="Path to the directory containing all image files.",
@@ -79,7 +79,7 @@ def main(args):
 
     # Check for and load an ignore list if it exists
     ignore_list = []
-    ignore_csv_path = args.image_dir / "chips_ignore.csv"
+    ignore_csv_path = args.chip_dir / "chips_ignore.csv"
     if ignore_csv_path.exists():
         logging.info(f"Found ignore list at: {ignore_csv_path}")
         try:
@@ -95,7 +95,7 @@ def main(args):
             logging.error(f"Failed to read or process {ignore_csv_path}: {e}")
 
     splitter = DatasetSplitter(
-        image_dir=args.image_dir,
+        image_dir=args.chip_dir,
         mask_dir=args.mask_dir,
         output_dir=args.output_dir,
         train_ratio=args.train_ratio,

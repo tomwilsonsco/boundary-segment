@@ -40,7 +40,7 @@ def main():
         help="Path to the input chip metrics GeoPackage.",
     )
     parser.add_argument(
-        "--chips-dir",
+        "--chip-dir",
         type=str,
         required=True,
         help="Path to chips directory with chips_ignore.csv.",
@@ -68,7 +68,7 @@ def main():
 
     input_path = Path(args.input_gpkg)
 
-    chips_dir = Path(args.chips_dir)
+    chips_dir = Path(args.chip_dir)
 
     if not input_path.exists():
         logging.error(f"Input file not found: {input_path}")

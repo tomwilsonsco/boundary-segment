@@ -91,7 +91,7 @@ python unet/create_masks.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo
 The process using `rschip.DatasetSplitter()` will check for and not copy image-mask pairs that are all background (0 class only). The background only chips are recorded in a `chips_ignore.csv` created in the same directory as the chip files. This can be added to later see [12. Filtering Chips](#12-filter-training-chips).
 
 ```bash
-python unet/split_dataset_train_test.py --image-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/masks" --output-dir inputs/images/gretna
+python unet/split_dataset_train_test.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/masks" --output-dir inputs/images/gretna
 ```
 
 ## 6. Train model
@@ -118,7 +118,7 @@ Once a trained model is achieving test set prediction performance you are happy 
 This process takes a while to complete on large extents.
 
 ```bash
-python unet/predict.py --input-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips"
+python unet/predict.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips"
 ```
 
 As with the evaluate script, predict will use the latest trained model in `models/` unless the `--model` argument is used to specify a different one.
@@ -138,7 +138,7 @@ The models's aim is to predict true, visible boundary lines, but in the subseque
 This script accounts for this by specifying a buffer distance (metres) and then calculates lengths of true positive (TP), false positive (FP), false negative (FN) prediction line segments. These are written into a new output line geometry layer.
 
 ```bash
-python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch.gpkg --parcels inputs/gretna_parcels.gpkg --imgs-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --buffer-dist 3
+python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch.gpkg --parcels inputs/gretna_parcels.gpkg --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --buffer-dist 3
 ```
 
 ## 11. Stats per chip
@@ -162,7 +162,7 @@ The `chips_ignore.csv` is used to record these chips, along with existing chips 
 [5. Create dataset for train, validation, test](#5-create-dataset-for-train-validation-test).
 
 ```bash
-python unet/filter_training_chips.py --input-gpkg "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index_metrics.gpkg" --chips-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --min-training-length 30 --recall-min 0.5 --min-precision 0.5
+python unet/filter_training_chips.py --input-gpkg "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index_metrics.gpkg" --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --min-training-length 30 --recall-min 0.5 --min-precision 0.5
 ```
 
 

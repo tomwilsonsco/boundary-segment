@@ -66,7 +66,7 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 
 REM 6. Split Dataset
 echo [Step 6] Splitting dataset...
-python unet\split_dataset_train_test.py --image-dir "%CHIPS_DIR%" --mask-dir "%CHIPS_DIR%\masks" --output-dir "%OUTPUT_ROOT%" --train-ratio 0.6 --val-ratio 0.2 --test-ratio 0.2
+python unet\split_dataset_train_test.py --chip-dir "%CHIPS_DIR%" --mask-dir "%CHIPS_DIR%\masks" --output-dir "%OUTPUT_ROOT%" --train-ratio 0.6 --val-ratio 0.2 --test-ratio 0.2
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 REM 7. Train Model
@@ -99,7 +99,7 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 
 REM 9. Predict
 echo [Step 9] Running prediction...
-python unet\predict.py --input-dir "%CHIPS_DIR%" --model "%MODEL_PATH%" --output-dir "%OUTPUT_ROOT%\predictions"
+python unet\predict.py --chip-dir "%CHIPS_DIR%" --model "%MODEL_PATH%" --output-dir "%OUTPUT_ROOT%\predictions"
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 REM 10. Example Plots

@@ -20,7 +20,7 @@ def parse_arguments():
         help="Path to the root dataset directory containing train/, val/, test/ splits.",
     )
     parser.add_argument(
-        "--chips-dir",
+        "--chip-dir",
         type=Path,
         required=True,
         help="Path to the chips directory containing chips_ignore.csv.",
@@ -43,7 +43,7 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
-    csv_path = args.chips_dir / "chips_ignore.csv"
+    csv_path = args.chip_dir / "chips_ignore.csv"
     if not csv_path.exists():
         logging.error(f"chips_ignore.csv not found at: {csv_path}")
         return

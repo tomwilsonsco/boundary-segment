@@ -113,7 +113,7 @@ def parse_arguments(args=None):
         help="Path to the ground truth parcels shapefile or GPKG.",
     )
     parser.add_argument(
-        "--imgs-dir",
+        "--chip-dir",
         type=Path,
         required=True,
         help="Directory of chip TIFFs to limit evaluation extent.",
@@ -182,19 +182,19 @@ def main(args):
             pred_gdf.geom_type.isin(["LineString", "MultiLineString"])
         ].copy()
 
-    if not args.imgs_dir.exists():
-        raise FileNotFoundError(f"Image directory not found: {args.imgs_dir}")
+    if not args.chip_dir.exists():
+        raise FileNotFoundError(f"Image directory not found: {args.chip_dir}")
 
-    index_path = args.imgs_dir / "chips_index.gpkg"
+    index_path = args.chip_dir / "chips_index.gpkg"
 
     if index_path.exists():
         print(f"Loading existing index layer from {index_path}...")
         index_gdf = gpd.read_file(index_path)
     else:
-        print(f"Building index layer from {args.imgs_dir}...")
-        tif_files = list(args.imgs_dir.glob("*.tif"))
+        print(f"Building index layer from {args.chip_dir}...")
+        tif_files = list(args.chip_dir.glob("*.tif"))
         if not tif_files:
-            raise FileNotFoundError(f"No .tif files found in {args.imgs_dir}")
+            raise FileNotFoundError(f"No .tif files found in {args.chip_dir}")
 
         geoms = []
         for file_path in tqdm(tif_files, desc="building index layer"):

@@ -547,7 +547,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Run Inference and Stitch Results")
 
     parser.add_argument(
-        "--input-dir",
+        "--chip-dir",
         type=Path,
         required=True,
         help="Directory containing input chip images (.tif).",
@@ -687,7 +687,7 @@ def main():
         print("Starting inference...")
         pred_files = predict_chips(
             model,
-            args.input_dir,
+            args.chip_dir,
             temp_dir,
             device,
             batch_size=args.batch_size,

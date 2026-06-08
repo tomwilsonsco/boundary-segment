@@ -106,7 +106,7 @@ def run_unet_predict(input_dir, output_dir, model_path=None):
     cmd = [
         sys.executable,
         "unet/predict.py",
-        "--input-dir",
+        "--chip-dir",
         str(input_dir),
         "--output-dir",
         str(output_dir),

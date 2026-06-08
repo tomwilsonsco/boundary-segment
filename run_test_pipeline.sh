@@ -74,7 +74,7 @@ echo "======================================================="
 # # 5. Split Dataset
 # echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 5] Splitting dataset..."
 # python unet/split_dataset_train_test.py \
-#     --image-dir "${CHIPS_DIR}" \
+#     --chip-dir "${CHIPS_DIR}" \
 #     --mask-dir "${CHIPS_DIR}/masks" \
 #     --output-dir "${OUTPUT_ROOT}" \
 #     --train-ratio 0.7 --val-ratio 0.2 --test-ratio 0.1
@@ -113,7 +113,7 @@ echo "======================================================="
 # # Predicting on the chips folder generated in Step 3
 # echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 8] Running prediction..."
 # python unet/predict.py \
-#     --input-dir "${CHIPS_DIR}" \
+#     --chip-dir "${CHIPS_DIR}" \
 #     --model "${MODEL_PATH}" \
 #     --output-dir "${OUTPUT_ROOT}/predictions" \
 #     --num-workers 8
@@ -141,7 +141,7 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 10] Running line evaluation..."
 python unet/line_evaluate.py \
     --pred-gpkg "${PRED_GPKG}" \
     --parcels "${PARCELS_GPKG}" \
-    --imgs-dir "${CHIPS_DIR}" \
+    --chip-dir "${CHIPS_DIR}" \
     --buffer-dist 3
 
 # Detect line comparison GPKG
@@ -160,7 +160,7 @@ python unet/chip_metrics.py \
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 12] Filtering training chips..."
 python unet/filter_training_chips.py \
     --input-gpkg "${CHIPS_DIR}/chips_index_metrics.gpkg" \
-    --chips-dir "${CHIPS_DIR}" \
+    --chip-dir "${CHIPS_DIR}" \
     --min-training-length 30.0 \
     --recall-min 0.5 \
     --min-precision 0.5
