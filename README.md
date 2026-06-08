@@ -138,7 +138,7 @@ The models's aim is to predict true, visible boundary lines, but in the subseque
 This script accounts for this by specifying a buffer distance (metres) and then calculates lengths of true positive (TP), false positive (FP), false negative (FN) prediction line segments. These are written into a new output line geometry layer.
 
 ```bash
-python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch.gpkg --parcels inputs/gretna_parcels.gpkg --buffer-dist 3
+python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch.gpkg --parcels inputs/gretna_parcels.gpkg --imgs-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --buffer-dist 3
 ```
 
 ## 11. Stats per chip
