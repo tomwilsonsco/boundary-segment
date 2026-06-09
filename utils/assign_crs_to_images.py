@@ -38,7 +38,7 @@ def parse_arguments(args=None):
         "--img-dir",
         type=Path,
         required=True,
-        help="Path to the folder containing images",
+        help="Path to the folder containing *.jpg / *.JPG images to process",
     )
     parser.add_argument(
         "--output-subdir",

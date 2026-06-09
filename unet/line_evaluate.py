@@ -116,7 +116,7 @@ def parse_arguments(args=None):
         "--chip-dir",
         type=Path,
         required=True,
-        help="Directory of chip TIFFs to limit evaluation extent.",
+        help="Directory containing chip TIFFs. A 'chips_index.gpkg' is read from (or auto-built in) this folder to determine evaluation extent.",
     )
     parser.add_argument(
         "--buffer-dist",

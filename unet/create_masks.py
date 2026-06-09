@@ -37,7 +37,7 @@ def parse_arguments(args=None):
         "--parcels",
         type=Path,
         required=True,
-        help="Path to the land parcels file (gpkg or shapefile)",
+        help="Path to the land parcels file (.gpkg or .shp accepted)",
     )
     parser.add_argument(
         "--output-subdir",
