@@ -1,3 +1,4 @@
+import logging
 import rasterio
 from rasterio.enums import Resampling
 import multiprocessing
@@ -5,6 +6,10 @@ from pathlib import Path
 from tqdm import tqdm
 import argparse
 from functools import partial
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 def downscale_image(file_path, out_dir, scale_factor):
@@ -86,12 +91,12 @@ def main(args):
 
     scale_factor = 1 / args.downscale_factor
 
-    print(f"Found {len(image_files)} TIFF files in {img_dir}")
+    logging.info(f"Found {len(image_files)} TIFF files in {img_dir}")
 
     if not args.singleprocessor:
         # Use available cores - 1
         num_workers = max(1, multiprocessing.cpu_count() - 1)
-        print(f"Using {num_workers} workers for processing.")
+        logging.info(f"Using {num_workers} workers for processing.")
 
         func = partial(downscale_image, out_dir=out_dir, scale_factor=scale_factor)
 
@@ -104,7 +109,7 @@ def main(args):
                 )
             )
     else:
-        print("Using single process.")
+        logging.info("Using single process.")
         for file_path in tqdm(image_files, desc="Downscaling geotiffs"):
             downscale_image(file_path, out_dir, scale_factor)
 
