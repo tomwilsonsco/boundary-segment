@@ -3,19 +3,7 @@ Predict land parcel boundaries using high resolution aerial photography and segm
 
 ## Process overview
 
-```mermaid
-graph LR
-    A[Base Model Prediction] --> B[Filter Local training Chips]
-    B --> C[Local Model Fine Tuning]
-    C --> D[Final Prediction]
-    D --> E[Change detection analysis]
-    
-    style A fill:#f4f8ff,stroke:#4a7aef,color:#0020a0
-    style B fill:#f4f8ff,stroke:#4a7aef,color:#0020a0
-    style C fill:#f4f8ff,stroke:#4a7aef,color:#0020a0
-    style D fill:#f4f8ff,stroke:#4a7aef,color:#0020a0
-    style E fill:#f0faf2,stroke:#00a35c,color:#004d40
-```
+![Process overview](process_model.svg)
 
 | Step | Script | Key input | Key output |
 |------|--------|-----------|------------|
