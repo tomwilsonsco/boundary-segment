@@ -138,9 +138,9 @@ def parse_arguments(args=None):
     parser.add_argument(
         "--loss-method",
         type=str,
-        default="focal_dice",
+        default="bce_dice",
         choices=["focal_dice", "bce_dice", "bce_only"],
-        help="Loss function combination to use. Default: focal_dice.",
+        help="Loss function combination to use. Default: bce_dice.",
     )
     parser.add_argument(
         "--pos-weight",

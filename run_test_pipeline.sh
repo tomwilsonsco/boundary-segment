@@ -85,7 +85,7 @@ python unet/train.py \
     --dataset-dir "${DATASET_DIR}" \
     --arch unetplusplus \
     --encoder efficientnet-b0 \
-    --epochs 1 \
+    --epochs 2 \
     --batch-size 8 \
     --num-workers 8 \
     --output-dir "${MODEL_DIR}" \
