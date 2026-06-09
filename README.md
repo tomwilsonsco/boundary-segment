@@ -3,7 +3,16 @@ Predict land parcel boundaries using high resolution aerial photography and segm
 
 ## Process overview
 
+Existing land parcel polygons are available for each area where the model will be applied, but some may be out of date and no longer match what is visible in the latest aerial photography. Only parcels that still accurately reflect the imagery are suitable as training data. This process is designed to identify those suitable parcels, fine-tune the model for each location, and create predictions suitable for change detection. The steps are shown in the diagram below.
+
+
 ![Process overview](process_model.svg)
+
+The aerial photography is first pre-processed into fixed-size image chips for input to the base model. Initial predictions are then made and compared against the existing land parcels to identify which chips have boundaries that still match the imagery. These are the chips suitable for training. After filtering to the most suitable chips, the model is fine-tuned for that location. The final predictions can then be used for change detection. The ultimate aim is prioritising parcels for review and update by the mapping team.
+
+
+The scripts generally should be run in the following order, as each step produces outputs that the next step depends on.
+
 
 | Step | Script | Key input | Key output |
 |------|--------|-----------|------------|
@@ -19,7 +28,9 @@ Predict land parcel boundaries using high resolution aerial photography and segm
 | 10 | `unet/line_evaluate.py` | Predictions `.gpkg` + parcels | TP/FP/FN lines `.gpkg` |
 | 11 | `unet/chip_metrics.py` | TP/FP/FN lines + chips index | `chips_index_metrics.gpkg` |
 | 12 | `unet/filter_training_chips.py` | `chips_index_metrics.gpkg` | Updated `chips_ignore.csv` |
-| → | Re-run Step 5 | Updated `chips_ignore.csv` | Cleaner dataset for retraining |
+
+After completing Step 12, re-run Step 5 with the updated `chips_ignore.csv` to produce a cleaner dataset before retraining the model and creating new predictions.
+
 
 # Setup
 This process uses open source geospatial packages and PyTorch. Use of a GPU is recommended for training the models and making predictions. 
