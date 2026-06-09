@@ -1,4 +1,5 @@
 import argparse
+import logging
 from pathlib import Path
 import tempfile
 import multiprocessing
@@ -6,6 +7,10 @@ from functools import partial
 import geopandas as gpd
 from tqdm import tqdm
 from rschip import SegmentationMask
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 def process_mask_creation(chip_path, out_dir, features_path):
@@ -20,7 +25,7 @@ def process_mask_creation(chip_path, out_dir, features_path):
         mask.create_mask(silent=True)
         return True
     except Exception as e:
-        print(f"Error processing {chip_path.name}: {e}")
+        logging.error(f"Error processing {chip_path.name}: {e}")
         return False
 
 
@@ -72,16 +77,16 @@ def main(args):
     out_dir = chip_dir / args.output_subdir
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Loading vector data...")
+    logging.info("Loading vector data...")
     gdf = gpd.read_file(parcels)
 
-    print("Converting polygons to lines...")
+    logging.info("Converting polygons to lines...")
     lines = gdf.geometry.boundary
 
-    print("Dissolving geometry (this may take a moment)...")
+    logging.info("Dissolving geometry (this may take a moment)...")
     lines = lines.explode(index_parts=True).union_all()
 
-    print(f"Buffering lines by {args.buffer_dist}m...")
+    logging.info(f"Buffering lines by {args.buffer_dist}m...")
     buffered_geom = lines.buffer(args.buffer_dist)
 
     buffer_gdf = gpd.GeoDataFrame(geometry=[buffered_geom], crs=gdf.crs)
@@ -90,7 +95,7 @@ def main(args):
     buffer_gdf["ml_class"] = 1
 
     chip_paths = list(chip_dir.glob("*.tif"))
-    print(f"Processing {len(chip_paths)} chips...")
+    logging.info(f"Processing {len(chip_paths)} chips...")
 
     tmp_file = tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False)
     temp_gpkg_path = Path(tmp_file.name)
@@ -103,7 +108,7 @@ def main(args):
         if not args.singleprocessor:
             # use available cores - 1
             num_workers = max(1, multiprocessing.cpu_count() - 1)
-            print(f"Using {num_workers} workers for processing.")
+            logging.info(f"Using {num_workers} workers for processing.")
 
             func = partial(
                 process_mask_creation, out_dir=out_dir, features_path=temp_gpkg_path
@@ -119,7 +124,7 @@ def main(args):
                 )
             success_count = sum(results)
         else:
-            print("Using single process.")
+            logging.info("Using single process.")
             for chip_path in tqdm(chip_paths, desc="Generating masks"):
                 if process_mask_creation(chip_path, out_dir, temp_gpkg_path):
                     success_count += 1
@@ -129,7 +134,7 @@ def main(args):
             temp_gpkg_path.unlink()
 
     failed_count = len(chip_paths) - success_count
-    print(
+    logging.info(
         f"Mask generation complete. Succeeded: {success_count}, Failed: {failed_count}"
     )
 

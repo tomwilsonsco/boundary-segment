@@ -1,10 +1,15 @@
 import argparse
+import logging
 from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 def calculate_f1_from_mean_pr(df):
@@ -83,7 +88,7 @@ def main(args):
             f"background_only_check.csv not found in {args.mask_dir}"
         )
 
-    print(f"Loading line comparison from {args.line_comparison}...")
+    logging.info(f"Loading line comparison from {args.line_comparison}...")
     lines_gdf = gpd.read_file(args.line_comparison)
 
     if "pred_result" not in lines_gdf.columns:
@@ -91,13 +96,13 @@ def main(args):
             "Input line comparison GPKG must contain a 'pred_result' column."
         )
 
-    print(f"Loading chips index from {args.chips_index}...")
+    logging.info(f"Loading chips index from {args.chips_index}...")
     index_gdf = gpd.read_file(args.chips_index)
 
     if "file_name" not in index_gdf.columns:
         raise ValueError("Chips index GPKG must contain a 'file_name' column.")
 
-    print(f"Loading CSV from {csv_path}...")
+    logging.info(f"Loading CSV from {csv_path}...")
     df = pd.read_csv(csv_path)
 
     if "is_background_only" not in df.columns:
@@ -108,7 +113,7 @@ def main(args):
     # file name for joining
     df["file_name"] = df["image_file"].apply(lambda x: Path(x).name)
 
-    print("Joining index layer to CSV data...")
+    logging.info("Joining index layer to CSV data...")
     gdf = index_gdf.merge(df, on="file_name", how="left")
 
     if args.dataset_dir:
@@ -143,9 +148,9 @@ def main(args):
     results = []
 
     if to_process.empty:
-        print("No chips to process metrics for (all background).")
+        logging.info("No chips to process metrics for (all background).")
     else:
-        print(f"Intersecting lines with {len(to_process)} chip boundaries...")
+        logging.info(f"Intersecting lines with {len(to_process)} chip boundaries...")
         for _, row in tqdm(
             to_process.iterrows(), total=len(to_process), desc="Calculating metrics"
         ):
@@ -224,33 +229,33 @@ def main(args):
         if args.output_gpkg
         else args.line_comparison.parent / f"{args.line_comparison.stem}_chips.gpkg"
     )
-    print(f"Saving results to {out_gpkg}...")
+    logging.info(f"Saving results to {out_gpkg}...")
     gdf.to_file(out_gpkg, driver="GPKG")
-    print("Done.")
+    logging.info("Done.")
 
     if results:
-        print("\n" + "=" * 40)
-        print("Mean Metrics per Chip")
-        print("=" * 40)
+        logging.info("\n" + "=" * 40)
+        logging.info("Mean Metrics per Chip")
+        logging.info("=" * 40)
 
-        print("Overall:")
+        logging.info("Overall:")
         p, r, f1 = calculate_f1_from_mean_pr(gdf)
-        print(f"  Precision: {p:.4f}")
-        print(f"  Recall:    {r:.4f}")
-        print(f"  F1 Score:  {f1:.4f}")
+        logging.info(f"  Precision: {p:.4f}")
+        logging.info(f"  Recall:    {r:.4f}")
+        logging.info(f"  F1 Score:  {f1:.4f}")
 
         if args.dataset_dir and "dataset_split" in gdf.columns:
-            print("\nBy Dataset Split:")
+            logging.info("\nBy Dataset Split:")
             splits = sorted(gdf["dataset_split"].unique())
             for split in splits:
                 split_gdf = gdf[gdf["dataset_split"] == split]
                 if not split_gdf.empty:
                     p, r, f1 = calculate_f1_from_mean_pr(split_gdf)
-                    print(f"  {split.upper()}:")
-                    print(f"    Precision: {p:.4f}")
-                    print(f"    Recall:    {r:.4f}")
-                    print(f"    F1 Score:  {f1:.4f}")
-        print("=" * 40 + "\n")
+                    logging.info(f"  {split.upper()}:")
+                    logging.info(f"    Precision: {p:.4f}")
+                    logging.info(f"    Recall:    {r:.4f}")
+                    logging.info(f"    F1 Score:  {f1:.4f}")
+        logging.info("=" * 40 + "\n")
 
 
 if __name__ == "__main__":
