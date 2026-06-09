@@ -29,19 +29,20 @@ def get_removal_condition(row, min_length, recall_min, min_precision):
     return " | ".join(reasons) if reasons else None
 
 
-def main():
+def parse_arguments(args=None):
+    """Set up and parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Filter noisy training chips based on evaluation metrics."
     )
     parser.add_argument(
         "--input-gpkg",
-        type=str,
+        type=Path,
         required=True,
         help="Path to the input chip metrics GeoPackage.",
     )
     parser.add_argument(
         "--chip-dir",
-        type=str,
+        type=Path,
         required=True,
         help="Path to chips directory with chips_ignore.csv.",
     )
@@ -63,12 +64,13 @@ def main():
         default=0.2,
         help="Minimum precision threshold. If precision is below this (and FP length >= 20m), it is recorded as 'extra_boundary'. Default: 0.2",
     )
+    return parser.parse_args(args)
 
-    args = parser.parse_args()
 
-    input_path = Path(args.input_gpkg)
-
-    chips_dir = Path(args.chip_dir)
+def main(args):
+    """Main orchestration function."""
+    input_path = args.input_gpkg
+    chip_dir = args.chip_dir
 
     if not input_path.exists():
         logging.error(f"Input file not found: {input_path}")
@@ -117,7 +119,7 @@ def main():
             return
         new_removals_df = to_remove[["file_name", "remove_condition"]]
 
-    csv_path = chips_dir / "chips_ignore.csv"
+    csv_path = chip_dir / "chips_ignore.csv"
 
     # handle existing chips_ignore.csv - e.g. background only chips
     if csv_path.exists():
@@ -170,4 +172,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(parse_arguments())
