@@ -1,3 +1,5 @@
+"""Estimate the proportion of boundary pixels in a sample of mask chips (useful for setting --pos-weight in train.py)."""
+
 import argparse
 import logging
 import random
@@ -12,6 +14,7 @@ logging.basicConfig(
 
 
 def parse_arguments():
+    """Set up and parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Calculate the mean proportion of '1' pixels in a sample of mask chips."
     )
@@ -37,6 +40,7 @@ def parse_arguments():
 
 
 def main():
+    """Sample a percentage of mask chips and report the mean proportion of boundary (class-1) pixels."""
     args = parse_arguments()
 
     if not args.mask_dir.is_dir():

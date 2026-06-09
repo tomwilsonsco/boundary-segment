@@ -1,3 +1,5 @@
+"""Generate 6-panel analysis plots comparing chips, masks, predictions, and ground truth boundaries."""
+
 import os
 import shutil
 import sys
@@ -23,7 +25,8 @@ logging.basicConfig(
 @contextmanager
 def suppress_stderr():
     """
-    Suppress C-level stderr output (like libtiff warnings).
+    Suppress C-level stderr output (e.g. libtiff warnings) by temporarily redirecting
+    file descriptor 2 to /dev/null. Python-level stderr is unaffected.
     """
     try:
         null_fd = os.open(os.devnull, os.O_RDWR)

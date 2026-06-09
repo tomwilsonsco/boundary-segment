@@ -1,3 +1,5 @@
+"""Assign a CRS to JPEG images and convert them to GeoTIFF format."""
+
 import logging
 from pathlib import Path
 from osgeo import gdal

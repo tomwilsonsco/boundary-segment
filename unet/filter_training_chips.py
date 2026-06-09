@@ -1,3 +1,5 @@
+"""Identify and record low-quality training chips in chips_ignore.csv based on per-chip metrics."""
+
 import argparse
 import logging
 from pathlib import Path

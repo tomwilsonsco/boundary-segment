@@ -1,3 +1,5 @@
+"""Compare predicted boundary line geometries against ground truth parcel lines, labelling TP, FP, and FN segments."""
+
 import argparse
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +18,10 @@ logging.basicConfig(
 
 
 def extract_lines(geom):
+    """Extract only LineString and MultiLineString geometries from a geometry object.
+
+    Returns a GeometryCollection if the input contains no linear geometry.
+    """
     if geom is None or geom.is_empty:
         return GeometryCollection()
     if geom.geom_type in ["LineString", "MultiLineString"]:

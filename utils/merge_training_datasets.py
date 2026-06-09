@@ -1,3 +1,5 @@
+"""Merge two train/val/test dataset directories into one, prefixing files to avoid name collisions."""
+
 import argparse
 import logging
 import multiprocessing
@@ -32,6 +34,11 @@ def rename_file(filepath: Path, prefix: str):
 
 
 def rename_and_prefix(dataset_dir: Path, num_workers: int):
+    """Prefix all chip and mask filenames in a dataset directory with the parent folder name.
+
+    This prevents filename collisions when merging two datasets that were chipped
+    from different source areas but may share identical filenames.
+    """
     prefix = dataset_dir.parent.name
     logging.info(f"Prefixing files in {dataset_dir} with '{prefix}_'...")
 
@@ -64,6 +71,7 @@ def move_file(args):
 
 
 def parse_arguments():
+    """Set up and parse command line arguments."""
     parser = argparse.ArgumentParser(description="Merge two training datasets.")
     parser.add_argument(
         "--target-dataset",
@@ -87,6 +95,7 @@ def parse_arguments():
 
 
 def main():
+    """Merge source dataset into target dataset, prefixing files to avoid name collisions."""
     args = parse_arguments()
     target_dataset = args.target_dataset.resolve()
     source_dataset = args.source_dataset.resolve()

@@ -1,3 +1,5 @@
+"""Train a segmentation model (U-Net / UNet++ / DeepLabV3+ / FPN) on chip images and binary boundary masks."""
+
 import logging
 import os
 import random
@@ -92,6 +94,7 @@ class FieldDataset(Dataset):
 
 
 def get_training_augmentation():
+    """Return the albumentations pipeline used for training: flips, rotation, affine, brightness, and ImageNet normalisation."""
     return albu.Compose(
         [
             albu.HorizontalFlip(p=0.5),
@@ -109,6 +112,7 @@ def get_training_augmentation():
 
 
 def get_validation_augmentation():
+    """Return the albumentations pipeline used for validation: ImageNet normalisation only (no geometric augmentation)."""
     return albu.Compose(
         [
             # imageNet normalization

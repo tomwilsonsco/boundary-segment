@@ -1,3 +1,5 @@
+"""Build a GDAL VRT mosaic from a directory of GeoTIFF or JPEG image files."""
+
 import logging
 from pathlib import Path
 from osgeo import gdal
@@ -9,7 +11,7 @@ logging.basicConfig(
 
 
 def parse_arguments(args=None):
-    """Parse user arguments using argparse"""
+    """Set up and parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Create a VRT mosaic from image files."
     )
@@ -34,7 +36,7 @@ def parse_arguments(args=None):
 
 
 def main(args):
-    """Main function."""
+    """Build a GDAL VRT mosaic from TIFF/JPEG files in the specified directory."""
     img_dir = args.img_dir.resolve()
 
     if not img_dir.exists():

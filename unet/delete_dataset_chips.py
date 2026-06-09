@@ -1,3 +1,5 @@
+"""Delete chip and mask files listed in chips_ignore.csv from an existing dataset directory."""
+
 import argparse
 import logging
 from pathlib import Path
@@ -10,6 +12,7 @@ logging.basicConfig(
 
 
 def parse_arguments():
+    """Set up and parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Delete chips from a train/val/test dataset that appear in chips_ignore.csv."
     )
@@ -41,6 +44,7 @@ def parse_arguments():
 
 
 def main():
+    """Delete image and mask files listed in chips_ignore.csv from the specified dataset splits."""
     args = parse_arguments()
 
     csv_path = args.chip_dir / "chips_ignore.csv"

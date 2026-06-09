@@ -1,3 +1,5 @@
+"""Evaluate a trained segmentation model on the held-out test set, reporting IoU and Dice scores."""
+
 import os
 from contextlib import contextmanager
 import torch
@@ -22,8 +24,8 @@ logging.basicConfig(
 @contextmanager
 def suppress_stderr():
     """
-    suppress C-level stderr output (like libtiff warnings).
-    This redirects the file descriptor 2 (stderr) to /dev/null temporarily.
+    Suppress C-level stderr output (e.g. libtiff warnings) by temporarily redirecting
+    file descriptor 2 to /dev/null. Python-level stderr is unaffected.
     """
     try:
         null_fd = os.open(os.devnull, os.O_RDWR)
@@ -52,6 +54,8 @@ def get_preprocessing():
 
 
 class FieldTestDataset(Dataset):
+    """PyTorch Dataset for loading test set image and mask pairs from a structured directory."""
+
     def __init__(self, img_dir, mask_dir, transform=None):
         self.img_dir = Path(img_dir)
         self.mask_dir = Path(mask_dir)

@@ -1,3 +1,5 @@
+"""Split chip images and masks into train, validation, and test dataset directories."""
+
 import argparse
 from pathlib import Path
 from rschip import DatasetSplitter

@@ -1,3 +1,5 @@
+"""Generate binary segmentation mask GeoTIFFs from land parcel polygon boundaries for each chip image."""
+
 import argparse
 import logging
 from pathlib import Path

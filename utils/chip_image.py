@@ -1,3 +1,5 @@
+"""Chip a VRT mosaic into fixed-size GeoTIFF tiles with optional resampling."""
+
 import logging
 from rschip import ImageChip
 from pathlib import Path

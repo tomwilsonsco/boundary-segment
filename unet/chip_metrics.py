@@ -1,3 +1,5 @@
+"""Calculate per-chip precision, recall, and F1 scores from line evaluation results."""
+
 import argparse
 import logging
 from pathlib import Path
@@ -75,6 +77,7 @@ def parse_arguments(args=None):
 
 
 def main(args):
+    """Load line evaluation results and chips index, compute per-chip TP/FP/FN lengths, precision, recall, and F1 score, and save results to a GeoPackage."""
     if not args.line_comparison.exists():
         raise FileNotFoundError(
             f"Line comparison file not found: {args.line_comparison}"

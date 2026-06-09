@@ -1,3 +1,5 @@
+"""Run inference with a trained segmentation model to produce a vector line GeoPackage of predicted boundaries."""
+
 import argparse
 import logging
 import os
@@ -33,7 +35,8 @@ from albumentations.pytorch import ToTensorV2
 @contextmanager
 def suppress_stderr():
     """
-    Suppress C-level stderr output (like libtiff warnings).
+    Suppress C-level stderr output (e.g. libtiff warnings) by temporarily redirecting
+    file descriptor 2 to /dev/null. Python-level stderr is unaffected.
     """
     try:
         null_fd = os.open(os.devnull, os.O_RDWR)
@@ -180,8 +183,9 @@ class ChipInferenceDataset(torch.utils.data.Dataset):
 
 def _writer_worker(write_queue, temp_dir):
     """
-    Runs in a background thread uses (prob_map, chip_path) pairs from
-    the queue and writes GeoTIFF prediction files without blocking inference.
+    Background thread worker that consumes (prob_map, chip_path, ...) items from
+    write_queue and writes them as single-band float32 GeoTIFF files, decoupling
+    disk I/O from GPU inference.
     """
     while True:
         item = write_queue.get()
@@ -385,7 +389,11 @@ def build_vrt(vrt_path, input_files):
 
 
 def process_chunk_worker(args):
-    """Worker function for parallel VRT processing."""
+    """
+    Multiprocessing worker that reads one spatial chunk of the prediction VRT,
+    applies morphological closing, skeletonises the binary mask, removes junction
+    pixels, and returns a list of vectorised line coordinate arrays.
+    """
     (
         vrt_path,
         col_start,
