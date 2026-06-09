@@ -237,7 +237,9 @@ def main(args):
     parcel_lines_gdf = gpd.GeoDataFrame(geometry=parcel_lines, crs=crs)
     parcel_lines_gdf = gpd.clip(parcel_lines_gdf, index_union)
 
-    logging.info("Removing parcel lines near the external boundary of the study area...")
+    logging.info(
+        "Removing parcel lines near the external boundary of the study area..."
+    )
     extent_boundary_buffer = index_union.boundary.buffer(1.0)
     trimmed_geoms = parcel_lines_gdf.geometry.difference(extent_boundary_buffer)
     parcel_lines_gdf = parcel_lines_gdf.copy()

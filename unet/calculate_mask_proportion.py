@@ -60,7 +60,9 @@ def main():
     random.seed(args.seed)
     sampled_files = random.sample(mask_files, num_samples)
 
-    logging.info(f"Sampling {num_samples} out of {len(mask_files)} masks ({args.percent}%)...")
+    logging.info(
+        f"Sampling {num_samples} out of {len(mask_files)} masks ({args.percent}%)..."
+    )
     proportions = []
 
     for mask_path in tqdm(sampled_files, desc="Processing masks"):

@@ -189,7 +189,10 @@ def parse_arguments(args=None):
         help="Number of workers for DataLoader. Defaults to min(os.cpu_count(), 4).",
     )
     parser.add_argument(
-        "--lr", type=float, default=1e-4, help="Starting learning rate for the AdamW optimiser. Default: 0.0001."
+        "--lr",
+        type=float,
+        default=1e-4,
+        help="Starting learning rate for the AdamW optimiser. Default: 0.0001.",
     )
     parser.add_argument(
         "--accum-steps",
@@ -406,7 +409,9 @@ def main(args):
     else:
         dice_loss = smp.losses.DiceLoss(mode="binary", from_logits=True)
         if args.loss_method == "bce_dice":
-            logging.info(f"Using loss method: BCE + Dice (pos_weight={args.pos_weight})")
+            logging.info(
+                f"Using loss method: BCE + Dice (pos_weight={args.pos_weight})"
+            )
             secondary_loss = smp.losses.SoftBCEWithLogitsLoss(
                 pos_weight=torch.tensor([args.pos_weight]).to(DEVICE)
             )
@@ -461,10 +466,14 @@ def main(args):
             elif isinstance(checkpoint, dict) and "state_dict" in checkpoint:
                 model.load_state_dict(checkpoint["state_dict"])
                 logging.info("Loaded model weights only (from inference model file).")
-                logging.info("Optimizer, learning rate, and epochs will start from scratch.\n")
+                logging.info(
+                    "Optimizer, learning rate, and epochs will start from scratch.\n"
+                )
             else:
                 model.load_state_dict(checkpoint)
-                logging.info("Loaded model weights only (old format - no optimizer state)")
+                logging.info(
+                    "Loaded model weights only (old format - no optimizer state)"
+                )
                 logging.warning("Optimizer will restart from scratch\n")
         except Exception as e:
             logging.warning(f"Could not load checkpoint: {e}")

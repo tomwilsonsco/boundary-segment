@@ -311,7 +311,9 @@ def main(args):
     if args.model is None:
         models_dir = Path("models")
         if not models_dir.exists():
-            logging.error("Error: 'models/' directory not found. Cannot auto-detect model.")
+            logging.error(
+                "Error: 'models/' directory not found. Cannot auto-detect model."
+            )
             return
 
         files = list(models_dir.glob("*.pth"))

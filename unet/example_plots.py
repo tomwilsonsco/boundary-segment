@@ -384,9 +384,17 @@ def parse_arguments():
         help="Temporary directory used to store sampled chips and probability prediction TIFFs during the run. Default: outputs/temp_inference.",
     )
     parser.add_argument(
-        "--num-samples", type=int, default=50, help="Number of test set chips to randomly sample and generate 6-panel analysis plots for. Default: 50."
+        "--num-samples",
+        type=int,
+        default=50,
+        help="Number of test set chips to randomly sample and generate 6-panel analysis plots for. Default: 50.",
     )
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible chip sampling. Default: 42.")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducible chip sampling. Default: 42.",
+    )
     parser.add_argument(
         "--plots-only",
         action="store_true",
