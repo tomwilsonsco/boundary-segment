@@ -92,14 +92,12 @@ The scripts generally should be run in the following order, as each step produce
 | 4 | `unet/create_masks.py` | Chip TIFFs + parcels | Binary mask TIFFs |
 | 5 | `unet/split_dataset_train_test.py` | Chips + masks | `dataset/` train/val/test split |
 | 6 | `unet/train.py` | `dataset/` | Trained model `.pth` |
-| 7 | `unet/evaluate.py` | `dataset/test/` + model | IoU / Dice metrics |
-| 8 | `unet/predict.py` | Chip TIFFs + model | Boundary lines `.gpkg` |
-| 9 | `unet/example_plots.py` | `dataset/test/` + model + parcels | 6-panel PNG plots |
-| 10 | `unet/line_evaluate.py` | Predictions `.gpkg` + parcels | TP/FP/FN lines `.gpkg` |
-| 11 | `unet/chip_metrics.py` | TP/FP/FN lines + chips index | `chips_index_metrics.gpkg` |
-| 12 | `unet/filter_training_chips.py` | `chips_index_metrics.gpkg` | Updated `chips_ignore.csv` |
+| 7 | `unet/predict.py` | Chip TIFFs + model | Boundary lines `.gpkg` |
+| 8 | `unet/line_evaluate.py` | Predictions `.gpkg` + parcels | TP/FP/FN lines `.gpkg` |
+| 9 | `unet/chip_metrics.py` | TP/FP/FN lines + chips index | `chips_index_metrics.gpkg` |
+| 10 | `unet/filter_training_chips.py` | `chips_index_metrics.gpkg` | Updated `chips_ignore.csv` |
 
-After completing Step 12, re-run Step 5 with the updated `chips_ignore.csv` to produce a cleaner dataset before retraining the model and creating new predictions.
+After completing Step 10, re-run Step 5 with the updated `chips_ignore.csv` to produce a cleaner dataset before retraining the model and creating new predictions.
 
 
 ## 1. Assign CRS and convert jpegs to geotiffs
@@ -124,7 +122,7 @@ python utils/chip_image.py --vrt "inputs/images/gretna/12.5cm Aerial Photo/tiff_
 
 The `--resampling-factor 0.5` is used in this example to downscale the chips at the point of creation from 0.125 m per pixel in the source imagery to 0.25 m, requiring 4 times fewer chips to cover a given extent. The output chip size (512 in this example) accounts for the downscaling and output chips will be 0.25 m per pixel and 512 by 512 pixels. 
 
-Chips that are not entirely within the extent of the VRT are recorded in a chips_ignore.csv in the chips directory. This is used to exclude them from inclusion in training dataset. This csv is added to during [5. Split images and masks](#5-create-dataset-for-train-validation-test) and [12. Filtering Chips](#12-filter-training-chips).
+Chips that are not entirely within the extent of the VRT are recorded in a chips_ignore.csv in the chips directory. This is used to exclude them from inclusion in training dataset. This csv is added to during [5. Split images and masks](#5-create-dataset-for-train-validation-test) and [10. Filtering Chips](#10-filter-training-chips).
 
 ## 4. Create masks from land parcel lines
 This will create an equivalent binary mask tif (1 for lines 0 for background) for each input image.
@@ -132,7 +130,7 @@ This will create an equivalent binary mask tif (1 for lines 0 for background) fo
 python unet/create_masks.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --parcels inputs/gretna_parcels.gpkg
 ```
 ## 5. Create dataset for train, validation, test
-Background-only chips (where the mask contains no boundary pixels) are automatically excluded from the dataset and recorded in `chips_ignore.csv` in the chips directory. This file accumulates exclusions across multiple steps — see [12. Filter Training Chips](#12-filter-training-chips).
+Background-only chips (where the mask contains no boundary pixels) are automatically excluded from the dataset and recorded in `chips_ignore.csv` in the chips directory. This file accumulates exclusions across multiple steps — see [10. Filter Training Chips](#10-filter-training-chips).
 
 > **`chips_ignore.csv` - what is recorded**
 >
@@ -140,7 +138,7 @@ Background-only chips (where the mask contains no boundary pixels) are automatic
 > |---|---|
 > | Step 3 (`chip_image.py`) | Chip falls outside the VRT extent |
 > | Step 5 (`split_dataset_train_test.py`) | Chip mask is background-only |
-> | Step 12 (`filter_training_chips.py`) | Corner clipper, invisible boundary, or extra boundary |
+> | Step 10 (`filter_training_chips.py`) | Corner clipper, invisible boundary, or extra boundary |
 >
 > `split_dataset_train_test.py` reads this file and excludes all listed chips.
 > `filter_training_chips.py` preserves existing `outside image bounds` and
@@ -160,15 +158,7 @@ python unet/train.py --help
 python unet/train.py --dataset-dir inputs/images/gretna/dataset --arch unetplusplus --encoder efficientnet-b3 --loss-method bce_dice --epochs 30 --batch-size 8 --lr 0.0001 --desc test-025m
 ```
 
-## 7. Evaluate model
-Use `evaluate.py` to run the trained model on each test set image and report summary statistics: Intersection over Union (IoU) and Dice score.
-
-```bash
-python unet/evaluate.py --dataset-dir inputs/images/gretna/dataset --model models/example_test-025m_unetplusplus.pth
-```
-> **Note:** By default the most recent model in `models/` is used, selected by the timestamp in the filename. Only specify `--model` if you want to evaluate an older model.
-
-## 8. Predict with model
+## 7. Predict with model
 Once a trained model is achieving test set prediction performance you are happy with, you can predict for all chipped images across a continuous extent and produce a geopackage output of the boundary line predictions.
 
 This process takes a while to complete on large extents.
@@ -179,16 +169,7 @@ python unet/predict.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff
 
 As with the evaluate script, predict will use the latest trained model in `models/` unless the `--model` argument is used to specify a different one.
 
-## 9. Plot some prediction examples
-We can create plots as shown below for predictions on the test set of chips. Vary the number of samples and seed values to get different number and selection of plots.
-
-```bash
-python unet/example_plots.py --dataset-dir inputs/images/gretna/dataset  --parcels "inputs/gretna_parcels.gpkg" --num-samples 5 --seed 999
-```
-
-![Example test set prediction](plots/apgb_imgs_8832_40320_analysis.png)
-
-## 10. Run line evaluation
+## 8. Run line evaluation
 The model's aim is to predict visible boundary lines. In this evaluation a predicted line segment is counted as a True Positive (TP) if it falls within a specified buffer distance of the mapped ground truth line.
 
 This script accounts for this by specifying a buffer distance (metres) and then calculates lengths of true positive (TP), false positive (FP), false negative (FN) prediction line segments. These are written into a new output line geometry layer.
@@ -197,7 +178,7 @@ This script accounts for this by specifying a buffer distance (metres) and then 
 python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch.gpkg --parcels inputs/gretna_parcels.gpkg --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --buffer-dist 3
 ```
 
-## 11. Stats per chip
+## 9. Stats per chip
 It is useful to see statistics per chip on lengths of prediction TP, FP, FN and these can be used to calculate precision and recall and then F1 scores per chip. 
 
 This can be used to rank chips and review ones with a low F1 to discern chips with non-visible boundary lines (not benefitting training), from difficult to predict lines but that could be predicted by refining model training.
@@ -208,7 +189,7 @@ The `unet/chip_metrics.py` process adds these stats per chip to a copy of the in
 python unet/chip_metrics.py --line-comparison outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch_result_compare.gpkg --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/masks" --chips-index "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index.gpkg" --dataset-dir inputs/images/gretna/dataset --output-gpkg "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index_metrics.gpkg"
 ```
 
-## 12. Filter training chips
+## 10. Filter training chips
 To produce a good quality training dataset it can be useful to remove non-useful chips by making an initial prediction using a base model or early stopped model. The types of chips to remove:
 1. "Corner clippers": Chips where a training data boundary line just clips the corner of the chip, otherwise no boundary lines seen in the chip.
 2. "Invisible boundary": Chips with low recall. This could be because the boundary is not visible on the image.
@@ -220,18 +201,20 @@ To produce a good quality training dataset it can be useful to remove non-useful
 python unet/filter_training_chips.py --input-gpkg "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index_metrics.gpkg" --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --min-training-length 30 --recall-min 0.5 --min-precision 0.5
 ```
 
-After running Steps 10–12, re-run **Step 5** to create a new, cleaner dataset that
+After running Steps 8–10, re-run **Step 5** to create a new, cleaner dataset that
 excludes the chips added to `chips_ignore.csv`. Then re-run **Step 6** to train a
 new model on the improved dataset. Testing showed this iterative refinement produced
 useful improvements in prediction quality.
 
 
-## Utility Scripts
+## Additional Scripts
 
 The following scripts are part of the repository but are not part of the main pipeline above.
 
 | Script | What it does |
 |---|---|
+| `unet/evaluate.py` | Runs the trained model on each test set image and reports summary statistics: Intersection over Union (IoU) and Dice score. |
+| `unet/example_plots.py` | Creates 6-panel PNG plots showing predictions on test set chips, including parcels overlay. Vary `--num-samples` and `--seed` to get different selections. |
 | `utils/merge_training_datasets.py` | Merges two existing train/val/test dataset directories into one, prefixing filenames to avoid collisions. Useful when combining data from multiple geographic areas. |
 | `unet/calculate_mask_proportion.py` | Samples a percentage of mask chips and reports the mean proportion of boundary pixels. Use the result to determine a sensible `--pos-weight` for `train.py`. |
 | `unet/delete_dataset_chips.py` | Deletes chips listed in `chips_ignore.csv` from an existing dataset directory. An alternative to re-running `split_dataset_train_test.py` after filtering. |
@@ -246,4 +229,3 @@ An equivalent CMD is available for Windows users. On Windows you may need to ena
 
 ```powershell
 run_test_pipeline.cmd
-```
