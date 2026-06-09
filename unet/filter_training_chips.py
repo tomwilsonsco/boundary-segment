@@ -38,13 +38,13 @@ def parse_arguments(args=None):
         "--input-gpkg",
         type=Path,
         required=True,
-        help="Path to the input chip metrics GeoPackage.",
+        help="Path to the chip metrics GeoPackage produced by chip_metrics.py. Typically named chips_index_metrics.gpkg.",
     )
     parser.add_argument(
         "--chip-dir",
         type=Path,
         required=True,
-        help="Path to chips directory with chips_ignore.csv.",
+        help="Path to the chips directory. chips_ignore.csv will be created here (or updated if it already exists) with the filtered chip names.",
     )
     parser.add_argument(
         "--min-training-length",

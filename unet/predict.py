@@ -583,19 +583,19 @@ def parse_arguments():
         "--threshold",
         type=float,
         default=0.5,
-        help="Probability threshold for binary mask. Default: 0.5",
+        help="Probability threshold for converting the model output to a binary mask. Default: 0.5.",
     )
     parser.add_argument(
         "--chunk-size",
         type=int,
         default=2048,
-        help="Chunk size for processing VRT. Default: 2048",
+        help="Tile size in pixels used when converting the prediction probability mosaic to vector lines. Larger values use more memory but may be faster. Default: 2048.",
     )
     parser.add_argument(
         "--min-contour-length",
         type=int,
         default=5,
-        help="Minimum number of vertices for a line prediction to be retained. Default: 5",
+        help="Minimum number of vertices a predicted line segment must have to be kept. Shorter segments are discarded. Default: 5.",
     )
     parser.add_argument(
         "--batch-size",
@@ -613,7 +613,7 @@ def parse_arguments():
         "--extend-lines",
         type=float,
         default=0.5,
-        help="Extend each predicted line at both ends by this distance in metres. Set to 0 to disable. Default: 0.5",
+        help="Extend each predicted line at both ends by this distance in metres. Small extensions help connect lines that stop just short of a junction. Set to 0 to disable. Default: 0.5.",
     )
 
     return parser.parse_args()

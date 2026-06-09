@@ -268,8 +268,8 @@ def parse_arguments(args=None):
     parser.add_argument(
         "--tta",
         action="store_true",
-        help="Enable Test Time Augmentation (4x rotations). "
-        "Slower. Testing both with / without gives indication if beneficial prediction time.",
+        help="Enable Test Time Augmentation: averages predictions over 4 * 90-degree rotations. "
+        "Slower than standard inference. Comparing runs with and without TTA indicates whether it improves accuracy for your data.",
     )
     parser.add_argument(
         "--batch-size",

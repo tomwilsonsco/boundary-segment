@@ -25,7 +25,7 @@ def parse_arguments():
         "--percent",
         type=float,
         default=10.0,
-        help="Percentage of masks to sample (0-100). Default is 10.0.",
+        help="Percentage of masks to randomly sample (0-100). Default: 10.0.",
     )
     parser.add_argument(
         "--seed",

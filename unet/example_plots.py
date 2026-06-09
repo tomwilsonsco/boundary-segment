@@ -355,40 +355,39 @@ def parse_arguments():
         "--dataset-dir",
         type=Path,
         default=Path("inputs/images/dataset"),
-        help="Root dataset directory containing images/ and masks/ subdirs",
+        help="Root dataset directory containing images/ and masks/ subdirs. Default: inputs/images/dataset.",
     )
     parser.add_argument(
         "--parcels",
         type=Path,
-        default=Path("inputs/aoi_parcels.gpkg"),
-        help="Path to the land parcels file (gpkg or shapefile)",
+        help="Path to the land parcel polygons file (.gpkg or .shp). Used for overlay in the visualisation panels.",
     )
     parser.add_argument(
         "--model",
         type=Path,
         default=None,
-        help="Path to model checkpoint (optional, defaults to latest)",
+        help="Path to the model .pth file to use for prediction. Default: most recent file in models/.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("outputs/unet_screenshots"),
-        help="Directory to save screenshots",
+        help="Directory to save the 6-panel analysis PNG plots. Default: outputs/unet_screenshots.",
     )
     parser.add_argument(
         "--temp-dir",
         type=Path,
         default=Path("outputs/temp_inference"),
-        help="Temporary directory for inference",
+        help="Temporary directory used to store sampled chips and probability prediction TIFFs during the run. Default: outputs/temp_inference.",
     )
     parser.add_argument(
-        "--num-samples", type=int, default=50, help="Number of samples to plot"
+        "--num-samples", type=int, default=50, help="Number of test set chips to randomly sample and generate 6-panel analysis plots for. Default: 50."
     )
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible chip sampling. Default: 42.")
     parser.add_argument(
         "--plots-only",
         action="store_true",
-        help="Skip sampling and prediction, only regenerate plots from existing temp data",
+        help="Skip chip sampling and model inference. Regenerate plots using chips and predictions already present in --temp-dir. Useful for tweaking plot appearance without re-running inference.",
     )
 
     return parser.parse_args()

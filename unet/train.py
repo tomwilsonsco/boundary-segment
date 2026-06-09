@@ -152,20 +152,21 @@ def parse_arguments(args=None):
         type=str,
         default="unetplusplus",
         choices=["unet", "unetplusplus", "deeplabv3plus", "fpn"],
-        help="Model architecture. Default: unetplusplus",
+        help="Model architecture. Default: unetplusplus.",
     )
     parser.add_argument(
         "--encoder",
         type=str,
         default="efficientnet-b3",
         help="Encoder backbone (e.g. efficientnet-b3, resnet34). "
-        "See Segment Models Pytorch help for options. Default: efficientnet-b3.",
+        "See the Segmentation Models PyTorch documentation for all available encoders. Default: efficientnet-b3.",
     )
     parser.add_argument(
         "--weights",
         type=str,
         default="imagenet",
-        help="Encoder pretrained weights. Best not changed. Default: imagenet.",
+        help="Pre-trained weight source for the encoder backbone. Changing this is not recommended. "
+        "ImageNet weights give the best starting point for aerial imagery. Default: imagenet.",
     )
 
     parser.add_argument(
@@ -175,7 +176,7 @@ def parse_arguments(args=None):
         help="Number of epochs to train for. Default: 30.",
     )
     parser.add_argument(
-        "--batch-size", type=int, default=8, help="Batch size for training. Default 8."
+        "--batch-size", type=int, default=8, help="Batch size for training. Default: 8."
     )
     parser.add_argument(
         "--num-workers",
@@ -184,7 +185,7 @@ def parse_arguments(args=None):
         help="Number of workers for DataLoader. Defaults to min(os.cpu_count(), 4).",
     )
     parser.add_argument(
-        "--lr", type=float, default=1e-4, help="Learning rate. Default 0.0001."
+        "--lr", type=float, default=1e-4, help="Starting learning rate for the AdamW optimiser. Default: 0.0001."
     )
     parser.add_argument(
         "--accum-steps",
@@ -220,7 +221,7 @@ def parse_arguments(args=None):
         "--output-dir",
         type=Path,
         default=Path("models"),
-        help="Directory to save models. Default 'models'.",
+        help="Directory to save trained model files and the training loss plot. Default: models.",
     )
     parser.add_argument(
         "--resume",

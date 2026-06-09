@@ -54,7 +54,7 @@ def parse_arguments(args=None):
     parser.add_argument(
         "--crs",
         default="EPSG:27700",
-        help="Target CRS (default: EPSG:27700)",
+        help="Target CRS to assign to output GeoTIFFs. Default: EPSG:27700 (British National Grid).",
     )
     parser.add_argument(
         "--singleprocessor",

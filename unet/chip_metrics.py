@@ -55,7 +55,8 @@ def parse_arguments(args=None):
         "--mask-dir",
         type=Path,
         required=True,
-        help="Directory containing chip masks and background_only_check.csv.",
+        help="Directory containing chip mask files. Must also contain background_only_check.csv, "
+        "which is created automatically by split_dataset_train_test.py (rschip.DatasetSplitter).",
     )
     parser.add_argument(
         "--output-gpkg",

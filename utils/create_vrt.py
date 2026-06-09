@@ -28,7 +28,7 @@ def parse_arguments(args=None):
         "--crs",
         type=str,
         default="EPSG:27700",
-        help="CRS to assign to the VRT (default: EPSG:27700)",
+        help="CRS to assign to the VRT. Default: EPSG:27700 (British National Grid).",
     )
     return parser.parse_args(args)
 
