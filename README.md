@@ -5,7 +5,7 @@ Predict land parcel boundaries using high resolution aerial photography and segm
 This process uses open source geospatial packages and PyTorch. Use of a GPU is recommended for training the models and making predictions. 
 
 ## Using Docker
-Can optionally use the Docker setup I used in developing of this process. This is found under `/.devcontainer`. 
+You can optionally use the Docker setup used during development of this process. This is found under `/.devcontainer`. 
 
 1. First cd to the repo and build the Docker image:
 ```bash
@@ -58,6 +58,18 @@ The code in this repository is a series of Python scripts with input arguments s
 python path/name_of_script.py --help
 ```
 
+## Expected input directory structure
+
+```
+inputs/
+├── images/
+│   └── <area_name>/
+│       └── 12.5cm Aerial Photo/   ← APGB JPEG files go here
+└── <area_name>_parcels.gpkg       ← land parcel polygons
+```
+
+After running Steps 1–3 the `inputs/images/` tree will be populated with GeoTIFFs, a VRT, and chip files automatically.
+
 ## 1. Assign CRS and convert jpegs to geotiffs
 The APGB images do not have a CRS and arrive in jpeg format.
 ```bash
@@ -72,7 +84,7 @@ python utils/create_vrt.py --img-dir "inputs/images/gretna/12.5cm Aerial Photo/t
 
 ## 3. Create chip images from vrt
 Uses the [rs-chip](https://github.com/tomwilsonsco/rs-chip) package.  
-Progress bar takes a while to move from 0 as only moves once whole batch complete. Look at the output dir that chip files are being created if unsure.
+The progress bar may take a while to update from 0%, as it only advances once a full batch is complete. If unsure whether the script is running, check that .tif files are appearing in the output directory.
 
 ```bash
 python utils/chip_image.py --vrt "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/apgb_imgs.vrt" --chip-size 512 --chip-offset 384 --resampling-factor 0.5
@@ -88,7 +100,7 @@ This will create an equivalent binary mask tif (1 for lines 0 for background) fo
 python unet/create_masks.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --parcels inputs/gretna_parcels.gpkg
 ```
 ## 5. Create dataset for train, validation, test
-The process using `rschip.DatasetSplitter()` will check for and not copy image-mask pairs that are all background (0 class only). The background only chips are recorded in a `chips_ignore.csv` created in the same directory as the chip files. This can be added to later see [12. Filtering Chips](#12-filter-training-chips).
+Background-only chips (where the mask contains no boundary pixels) are automatically excluded from the dataset and recorded in `chips_ignore.csv` in the chips directory. This file accumulates exclusions across multiple steps — see [12. Filter Training Chips](#12-filter-training-chips).
 
 ```bash
 python unet/split_dataset_train_test.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/masks" --output-dir inputs/images/gretna
@@ -105,12 +117,12 @@ python unet/train.py --dataset-dir inputs/images/gretna/dataset --arch unetplusp
 ```
 
 ## 7. Evaluate model
-We use the evaluate.py to use trained model to predict from each test set image and then report summary stats on intersect over union (IoU) and dice score.
+Use `evaluate.py` to run the trained model on each test set image and report summary statistics: Intersection over Union (IoU) and Dice score.
 
 ```bash
 python unet/evaluate.py --dataset-dir inputs/images/gretna/dataset --model models/example_test-025m_unetplusplus.pth
 ```
- **Note:**: Although given above, we do not necessarily need to specify the model .pth file as by default it will take the most recent based on date time saved in the .pth file name. The `--model` argument is needed if not testing the most recently available.
+> **Note:** By default the most recent model in `models/` is used, selected by the timestamp in the filename. Only specify `--model` if you want to evaluate an older model.
 
 ## 8. Predict with model
 Once a trained model is achieving test set prediction performance you are happy with, you can predict for all chipped images across a continuous extent and produce a geopackage output of the boundary line predictions.
@@ -133,7 +145,7 @@ python unet/example_plots.py --dataset-dir inputs/images/gretna/dataset  --parce
 ![Example test set prediction](plots/apgb_imgs_8832_40320_analysis.png)
 
 ## 10. Run line evaluation
-The models's aim is to predict true, visible boundary lines, but in the subsequent comparison work, the prediction line is allowed to be within a buffer of the mapped parcel line. 
+The model's aim is to predict visible boundary lines. In this evaluation a predicted line segment is counted as a True Positive (TP) if it falls within a specified buffer distance of the mapped ground truth line.
 
 This script accounts for this by specifying a buffer distance (metres) and then calculates lengths of true positive (TP), false positive (FP), false negative (FN) prediction line segments. These are written into a new output line geometry layer.
 
@@ -158,13 +170,22 @@ To produce a good quality training dataset it can be useful to remove non-useful
 2. "Invisible boundary": Chips with low recall. This could be because the boundary is not visible on the image.
 3. "Extra boundary": Chips with low precision. This could be because the training data lines are out of date and new boundaries are seen on the image.
 
-The `chips_ignore.csv` is used to record these chips, along with existing chips that overlap the image extent or are all background, have no boundary lines at all. This allows them to be excluded with a subsequent creation of training dataset. See 
-[5. Create dataset for train, validation, test](#5-create-dataset-for-train-validation-test).
+`chips_ignore.csv` records all chips to exclude: those that fall outside the image extent (added in Step 3), background-only chips (added in Step 5), and low-quality chips identified here. Re-running Step 5 after this step will build a cleaner dataset that excludes all of these chips.
 
 ```bash
 python unet/filter_training_chips.py --input-gpkg "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index_metrics.gpkg" --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --min-training-length 30 --recall-min 0.5 --min-precision 0.5
 ```
 
+
+## Utility Scripts
+
+The following scripts are part of the repository but are not part of the main pipeline above.
+
+| Script | What it does |
+|---|---|
+| `utils/merge_training_datasets.py` | Merges two existing train/val/test dataset directories into one, prefixing filenames to avoid collisions. Useful when combining data from multiple geographic areas. |
+| `unet/calculate_mask_proportion.py` | Samples a percentage of mask chips and reports the mean proportion of boundary pixels. Use the result to determine a sensible `--pos-weight` for `train.py`. |
+| `unet/delete_dataset_chips.py` | Deletes chips listed in `chips_ignore.csv` from an existing dataset directory. An alternative to re-running `split_dataset_train_test.py` after filtering. |
 
 # Running full process
 A shell script is included that runs each stage described above for testing. This could be edited for production runs too. In a terminal after `cd` to the repository run:
