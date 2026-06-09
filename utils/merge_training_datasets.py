@@ -83,7 +83,11 @@ def parse_arguments():
         "--source-dataset",
         type=Path,
         required=True,
-        help="Path to the source dataset directory.",
+        help=(
+            "Path to the source dataset directory. Files will be MOVED (not copied) "
+            "from this directory into --target-dataset. The source directory will be "
+            "left with empty subdirectories after the merge."
+        ),
     )
     parser.add_argument(
         "--workers",
