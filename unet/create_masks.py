@@ -46,10 +46,10 @@ def parse_arguments(args=None):
         help="Name of the output subfolder (default: masks)",
     )
     parser.add_argument(
-        "--buffer-size",
+        "--buffer-dist",
         type=float,
         default=0.75,
-        help="Buffer size for lines in meters (default: 0.75)",
+        help="Buffer distance for lines in meters (default: 0.75)",
     )
     parser.add_argument(
         "--singleprocessor",
@@ -81,8 +81,8 @@ def main(args):
     print("Dissolving geometry (this may take a moment)...")
     lines = lines.explode(index_parts=True).union_all()
 
-    print(f"Buffering lines by {args.buffer_size}m...")
-    buffered_geom = lines.buffer(args.buffer_size)
+    print(f"Buffering lines by {args.buffer_dist}m...")
+    buffered_geom = lines.buffer(args.buffer_dist)
 
     buffer_gdf = gpd.GeoDataFrame(geometry=[buffered_geom], crs=gdf.crs)
 

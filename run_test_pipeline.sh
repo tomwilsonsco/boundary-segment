@@ -69,7 +69,7 @@ echo "======================================================="
 # python unet/create_masks.py \
 #     --chip-dir "${CHIPS_DIR}" \
 #     --parcels "${PARCELS_GPKG}" \
-#     --buffer-size 0.75
+#     --buffer-dist 0.75
 
 # # 5. Split Dataset
 # echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 5] Splitting dataset..."

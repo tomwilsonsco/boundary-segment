@@ -61,7 +61,7 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 
 REM 5. Create Masks
 echo [Step 5] Creating segmentation masks...
-python unet\create_masks.py --chip-dir "%CHIPS_DIR%" --parcels "%PARCELS_GPKG%" --buffer-size 0.75
+python unet\create_masks.py --chip-dir "%CHIPS_DIR%" --parcels "%PARCELS_GPKG%" --buffer-dist 0.75
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 REM 6. Split Dataset
