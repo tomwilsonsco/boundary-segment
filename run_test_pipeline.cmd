@@ -29,7 +29,7 @@ echo =======================================================
 
 REM 1. Assign CRS and convert to Tiff
 echo [Step 1] Assigning CRS and converting JPEGs to TIFF...
-python utils\assign_crs_to_images.py --img-dir "%SOURCE_IMAGES_DIR%" --output-subdir "tiff_with_crs" --target-crs "EPSG:27700"
+python utils\assign_crs_to_images.py --img-dir "%SOURCE_IMAGES_DIR%" --output-subdir "tiff_with_crs" --crs "EPSG:27700"
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 REM 2. Downscale

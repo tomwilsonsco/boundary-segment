@@ -47,7 +47,7 @@ def parse_arguments(args=None):
         help="Name of the output subfolder (default: tiff_with_crs)",
     )
     parser.add_argument(
-        "--target-crs",
+        "--crs",
         default="EPSG:27700",
         help="Target CRS (default: EPSG:27700)",
     )
@@ -76,10 +76,10 @@ def main(args):
     output_dir = img_dir / args.output_subdir
     output_dir.mkdir(exist_ok=True)
 
-    target_crs = args.target_crs
+    crs = args.crs
     print(f"Found {len(image_files)} JPG files to process in {img_dir}")
 
-    process_func = partial(process_image, output_dir=output_dir, target_crs=target_crs)
+    process_func = partial(process_image, output_dir=output_dir, target_crs=crs)
 
     if not args.singleprocessor:
         # Use available cores - 1

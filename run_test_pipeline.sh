@@ -36,7 +36,7 @@ echo "======================================================="
 # python utils/assign_crs_to_images.py \
 #     --img-dir "${SOURCE_IMAGES_DIR}" \
 #     --output-subdir "tiff_with_crs" \
-#     --target-crs "EPSG:27700"
+#     --crs "EPSG:27700"
 
 
 # # 2. Create VRT
