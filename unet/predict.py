@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -7,6 +8,10 @@ from datetime import datetime
 import threading
 import queue
 import multiprocessing
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 import torch
 import cv2
@@ -88,8 +93,8 @@ def load_model(model_path, device):
         clean_state_dict[new_k] = v
     state_dict = clean_state_dict
 
-    print(f"Architecture: {arch_name}")
-    print(f"Encoder: {encoder_name}")
+    logging.info(f"Architecture: {arch_name}")
+    logging.info(f"Encoder: {encoder_name}")
 
     if arch_name == "unetplusplus":
         model = smp.UnetPlusPlus(
@@ -226,10 +231,10 @@ def predict_chips(
     chip_files = sorted(input_dir.glob("*.tif"))
 
     if not chip_files:
-        print(f"No .tif files found in {input_dir}")
+        logging.warning(f"No .tif files found in {input_dir}")
         return []
 
-    print(
+    logging.info(
         f"Predicting on {len(chip_files)} chips "
         f"(batch_size={batch_size}, num_workers={num_workers})..."
     )
@@ -321,13 +326,13 @@ def _build_vrt_worker(args):
         gdal.BuildVRT(str(vrt_path), input_strs, options=options)
         return str(vrt_path)
     except Exception as e:
-        print(f"Worker VRT error: {e}")
+        logging.error(f"Worker VRT error: {e}")
         return None
 
 
 def build_vrt(vrt_path, input_files):
     """Build a VRT from a list of input files."""
-    print(f"Building VRT from {len(input_files)} files...")
+    logging.info(f"Building VRT from {len(input_files)} files...")
 
     if len(input_files) < 2000:
         try:
@@ -338,7 +343,7 @@ def build_vrt(vrt_path, input_files):
             gdal.BuildVRT(str(vrt_path), input_strs, options=options)
             return True
         except Exception as e:
-            print(f"Error building VRT: {e}")
+            logging.error(f"Error building VRT: {e}")
             return False
 
     # For massive datasets, parallelise the I/O bottleneck of reading thousands of TIFF headers
@@ -356,7 +361,7 @@ def build_vrt(vrt_path, input_files):
         temp_vrt = temp_dir / f"chunk_{i}.vrt"
         worker_args.append((temp_vrt, chunk))
 
-    print(
+    logging.info(
         f"Splitting VRT generation into {len(chunks)} chunks across multiple CPU cores..."
     )
     try:
@@ -367,7 +372,7 @@ def build_vrt(vrt_path, input_files):
                 if res:
                     intermediate_vrts.append(res)
 
-        print("Merging intermediate VRTs into final mosaic...")
+        logging.info("Merging intermediate VRTs into final mosaic...")
         options = gdal.BuildVRTOptions(
             resampleAlg=gdal.GRA_NearestNeighbour, resolution="highest"
         )
@@ -375,7 +380,7 @@ def build_vrt(vrt_path, input_files):
 
         return True
     except Exception as e:
-        print(f"Error building VRT: {e}")
+        logging.error(f"Error building VRT: {e}")
         return False
 
 
@@ -451,7 +456,7 @@ def process_vrt_to_lines(
     vrt_path, chunk_size=2048, threshold=0.5, min_contour_length=5
 ):
     """Process VRT in chunks to create skeleton and vectorize."""
-    print("Opening VRT for chunked processing...")
+    logging.info("Opening VRT for chunked processing...")
 
     with rasterio.open(vrt_path) as src:
         width = src.width
@@ -459,7 +464,7 @@ def process_vrt_to_lines(
         transform = src.transform
         crs = src.crs
 
-        print(f"Mosaic dimensions: {width} x {height} pixels")
+        logging.info(f"Mosaic dimensions: {width} x {height} pixels")
 
         # calculate number of chunks
         n_chunks_x = int(np.ceil(width / chunk_size))
@@ -494,7 +499,7 @@ def process_vrt_to_lines(
 
         lines = []
         num_workers = max(1, multiprocessing.cpu_count() - 2)
-        print(
+        logging.info(
             f"Processing in {chunk_size}x{chunk_size} chunks with {num_workers} workers..."
         )
 
@@ -636,10 +641,10 @@ def main():
             if candidates:
                 candidates.sort(key=lambda f: f.name)
                 args.model = candidates[-1]
-                print(f"No model specified. Using most recent: {args.model}")
+                logging.info(f"No model specified. Using most recent: {args.model}")
 
     if not args.model or not args.model.exists():
-        print(f"Error: Model not found: {args.model}")
+        logging.error(f"Error: Model not found: {args.model}")
         return
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -657,13 +662,13 @@ def main():
             )
             if resp in ["u", "o"]:
                 break
-            print("Please enter 'u' to use existing or 'o' to overwrite.")
+            logging.warning("Please enter 'u' to use existing or 'o' to overwrite.")
 
         if resp == "u":
             use_existing = True
-            print("Skipping inference, using existing predictions...")
+            logging.info("Skipping inference, using existing predictions...")
         else:
-            print("Overwriting existing predictions...")
+            logging.info("Overwriting existing predictions...")
             shutil.rmtree(temp_dir)
             temp_dir.mkdir(parents=True, exist_ok=True)
     else:
@@ -673,18 +678,18 @@ def main():
         pred_files = list(temp_dir.glob("*.tif"))
     else:
         # 2. Load Model
-        print(f"Loading model from {args.model}...")
+        logging.info(f"Loading model from {args.model}...")
         model = load_model(args.model, device)
 
         if device == "cuda":
             try:
                 model = torch.compile(model)
-                print("Model compiled with torch.compile()")
+                logging.info("Model compiled with torch.compile()")
             except Exception as e:
-                print(f"torch.compile() unavailable, skipping: {e}")
+                logging.warning(f"torch.compile() unavailable, skipping: {e}")
 
         # 3. Predict
-        print("Starting inference...")
+        logging.info("Starting inference...")
         pred_files = predict_chips(
             model,
             args.chip_dir,
@@ -696,7 +701,7 @@ def main():
         )
 
     if not pred_files:
-        print("No predictions generated. Exiting.")
+        logging.warning("No predictions generated. Exiting.")
         return
 
     # 4. Stitch (VRT)
@@ -722,21 +727,21 @@ def main():
         model_name = args.model.stem
         out_gpkg = args.output_dir / f"{timestamp}_{model_name}_boundaries.gpkg"
 
-        print(f"Saving {len(lines)} boundaries to {out_gpkg}...")
+        logging.info(f"Saving {len(lines)} boundaries to {out_gpkg}...")
         gdf = gpd.GeoDataFrame(geometry=lines, crs=crs)
         gdf.to_file(out_gpkg, driver="GPKG")
-        print("Done.")
+        logging.info("Done.")
     else:
-        print("No lines detected.")
+        logging.warning("No lines detected.")
 
     # 8. Cleanup
     if not args.keep_preds:
-        print("Cleaning up temporary files...")
+        logging.info("Cleaning up temporary files...")
         shutil.rmtree(temp_dir)
         if vrt_path.exists():
             vrt_path.unlink()
     else:
-        print(f"Temporary files retained in {temp_dir}")
+        logging.info(f"Temporary files retained in {temp_dir}")
 
 
 if __name__ == "__main__":
