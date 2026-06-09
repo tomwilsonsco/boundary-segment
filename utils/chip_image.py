@@ -1,3 +1,4 @@
+import logging
 from rschip import ImageChip
 from pathlib import Path
 from tqdm import tqdm
@@ -61,6 +62,9 @@ def parse_arguments(args=None):
 
 def main(args):
     """Main orchestration function."""
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
     vrt_path = args.vrt.resolve()
 
     if not vrt_path.exists():
@@ -77,14 +81,14 @@ def main(args):
     # if output directory is not empty, prompt user to overwrite
     if any(out_dir.iterdir()):
         if args.overwrite_output_dir:
-            print("Deleting existing files...")
+            logging.info("Deleting existing files...")
             for file in out_dir.iterdir():
                 if file.is_file():
                     file.unlink()
                 elif file.is_dir():
                     shutil.rmtree(file)
         else:
-            print("Operation cancelled.")
+            logging.warning("Operation cancelled.")
             sys.exit(1)
 
     # initialize rschip.ImageChip
