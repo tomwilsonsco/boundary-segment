@@ -1,6 +1,24 @@
 # Boundary Segment
 Predict land parcel boundaries using high resolution aerial photography and segmentation models such as [U-Net](https://arxiv.org/abs/1505.04597) and [Unet++](https://arxiv.org/abs/1807.10165).
 
+## Pipeline overview
+
+| Step | Script | Key input | Key output |
+|------|--------|-----------|------------|
+| 1 | `utils/assign_crs_to_images.py` | JPEG images | GeoTIFFs with CRS |
+| 2 | `utils/create_vrt.py` | GeoTIFFs | `.vrt` mosaic |
+| 3 | `utils/chip_image.py` | `.vrt` | Chip `.tif` files + `chips_index.gpkg` |
+| 4 | `unet/create_masks.py` | Chip TIFFs + parcels | Binary mask TIFFs |
+| 5 | `unet/split_dataset_train_test.py` | Chips + masks | `dataset/` train/val/test split |
+| 6 | `unet/train.py` | `dataset/` | Trained model `.pth` |
+| 7 | `unet/evaluate.py` | `dataset/test/` + model | IoU / Dice metrics |
+| 8 | `unet/predict.py` | Chip TIFFs + model | Boundary lines `.gpkg` |
+| 9 | `unet/example_plots.py` | `dataset/test/` + model + parcels | 6-panel PNG plots |
+| 10 | `unet/line_evaluate.py` | Predictions `.gpkg` + parcels | TP/FP/FN lines `.gpkg` |
+| 11 | `unet/chip_metrics.py` | TP/FP/FN lines + chips index | `chips_index_metrics.gpkg` |
+| 12 | `unet/filter_training_chips.py` | `chips_index_metrics.gpkg` | Updated `chips_ignore.csv` |
+| → | Re-run Step 5 | Updated `chips_ignore.csv` | Cleaner dataset for retraining |
+
 # Setup
 This process uses open source geospatial packages and PyTorch. Use of a GPU is recommended for training the models and making predictions. 
 
