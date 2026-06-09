@@ -222,8 +222,8 @@ python unet/filter_training_chips.py --input-gpkg "inputs/images/gretna/12.5cm A
 
 After running Steps 10–12, re-run **Step 5** to create a new, cleaner dataset that
 excludes the chips added to `chips_ignore.csv`. Then re-run **Step 6** to train a
-new model on the improved dataset. Testing showed this iterative refinement produces
-useful improvements.
+new model on the improved dataset. Testing showed this iterative refinement produced
+useful improvements in prediction quality.
 
 
 ## Utility Scripts
