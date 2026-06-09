@@ -353,10 +353,10 @@ def parse_arguments():
         help="Root dataset directory containing images/ and masks/ subdirs",
     )
     parser.add_argument(
-        "--parcels-gpkg",
+        "--parcels",
         type=Path,
         default=Path("inputs/aoi_parcels.gpkg"),
-        help="Path to ground truth parcels GPKG",
+        help="Path to the land parcels file (gpkg or shapefile)",
     )
     parser.add_argument(
         "--model",
@@ -422,7 +422,7 @@ def main(args):
 
     # parcels
     print("\n[Step 3] Loading parcels...")
-    parcels_gdf = load_parcels(args.parcels_gpkg)
+    parcels_gdf = load_parcels(args.parcels)
     print(f"Loaded {len(parcels_gdf)} parcels")
 
     if args.plots_only:

@@ -68,7 +68,7 @@ echo "======================================================="
 # echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 4] Creating segmentation masks..."
 # python unet/create_masks.py \
 #     --chip-dir "${CHIPS_DIR}" \
-#     --shapefile "${PARCELS_GPKG}" \
+#     --parcels "${PARCELS_GPKG}" \
 #     --buffer-size 0.75
 
 # # 5. Split Dataset
@@ -122,7 +122,7 @@ echo "======================================================="
 # echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Step 9] Generating analysis plots..."
 # python unet/example_plots.py \
 #     --dataset-dir "${DATASET_DIR}" \
-#     --parcels-gpkg "${PARCELS_GPKG}" \
+#     --parcels "${PARCELS_GPKG}" \
 #     --model "${MODEL_PATH}" \
 #     --output-dir "${OUTPUT_ROOT}/plots" \
 #     --num-samples 5 \

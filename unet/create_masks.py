@@ -34,10 +34,10 @@ def parse_arguments(args=None):
         help="Path to the folder containing chip images",
     )
     parser.add_argument(
-        "--shapefile",
+        "--parcels",
         type=Path,
         required=True,
-        help="Path to the land parcels shapefile or gpkg",
+        help="Path to the land parcels file (gpkg or shapefile)",
     )
     parser.add_argument(
         "--output-subdir",
@@ -62,18 +62,18 @@ def parse_arguments(args=None):
 def main(args):
     """Main orchestration function."""
     chip_dir = args.chip_dir.resolve()
-    shapefile = args.shapefile.resolve()
+    parcels = args.parcels.resolve()
 
     if not chip_dir.exists():
         raise ValueError(f"Chip directory not found: {chip_dir}")
-    if not shapefile.exists():
-        raise ValueError(f"Shapefile not found: {shapefile}")
+    if not parcels.exists():
+        raise ValueError(f"Parcels file not found: {parcels}")
 
     out_dir = chip_dir / args.output_subdir
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print("Loading vector data...")
-    gdf = gpd.read_file(shapefile)
+    gdf = gpd.read_file(parcels)
 
     print("Converting polygons to lines...")
     lines = gdf.geometry.boundary

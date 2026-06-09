@@ -61,7 +61,7 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 
 REM 5. Create Masks
 echo [Step 5] Creating segmentation masks...
-python unet\create_masks.py --chip-dir "%CHIPS_DIR%" --shapefile "%PARCELS_GPKG%" --buffer-size 0.75
+python unet\create_masks.py --chip-dir "%CHIPS_DIR%" --parcels "%PARCELS_GPKG%" --buffer-size 0.75
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 REM 6. Split Dataset
@@ -104,7 +104,7 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 
 REM 10. Example Plots
 echo [Step 10] Generating analysis plots...
-python unet\example_plots.py --dataset-dir "%DATASET_DIR%" --parcels-gpkg "%PARCELS_GPKG%" --model "%MODEL_PATH%" --output-dir "%OUTPUT_ROOT%\plots" --num-samples 5
+python unet\example_plots.py --dataset-dir "%DATASET_DIR%" --parcels "%PARCELS_GPKG%" --model "%MODEL_PATH%" --output-dir "%OUTPUT_ROOT%\plots" --num-samples 5
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Pipeline test complete. Outputs in %OUTPUT_ROOT%

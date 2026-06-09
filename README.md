@@ -85,7 +85,7 @@ Chips that are not entirely within the extent of the VRT are recorded in a chips
 ## 4. Create masks from land parcel lines
 This will create an equivalent binary mask tif (1 for lines 0 for background) for each input image.
 ```bash
-python unet/create_masks.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --shapefile inputs/gretna_parcels.gpkg
+python unet/create_masks.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --parcels inputs/gretna_parcels.gpkg
 ```
 ## 5. Create dataset for train, validation, test
 The process using `rschip.DatasetSplitter()` will check for and not copy image-mask pairs that are all background (0 class only). The background only chips are recorded in a `chips_ignore.csv` created in the same directory as the chip files. This can be added to later see [12. Filtering Chips](#12-filter-training-chips).
@@ -127,7 +127,7 @@ As with the evaluate script, predict will use the latest trained model in `model
 We can create plots as shown below for predictions on the test set of chips. Vary the number of samples and seed values to get different number and selection of plots.
 
 ```bash
-python unet/example_plots.py --dataset-dir inputs/images/gretna/dataset  --parcels-gpkg "inputs/gretna_parcels.gpkg" --num-samples 5 --seed 999
+python unet/example_plots.py --dataset-dir inputs/images/gretna/dataset  --parcels "inputs/gretna_parcels.gpkg" --num-samples 5 --seed 999
 ```
 
 ![Example test set prediction](plots/apgb_imgs_8832_40320_analysis.png)
