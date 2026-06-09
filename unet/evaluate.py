@@ -12,6 +12,11 @@ import multiprocessing
 from datetime import datetime
 import argparse
 from pathlib import Path
+import logging
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 @contextmanager
@@ -70,15 +75,15 @@ class FieldTestDataset(Dataset):
             mask = cv2.imread(str(mask_path), 0)
 
         if image is None:
-            print(f"\n[CRITICAL ERROR] Could not read IMAGE at: {image_path}")
-            print(
+            logging.error(f"\n[CRITICAL ERROR] Could not read IMAGE at: {image_path}")
+            logging.error(
                 f"File size: {image_path.stat().st_size if image_path.exists() else 'Missing'} bytes"
             )
             raise ValueError(f"Corrupt file found: {image_path}")
 
         if mask is None:
-            print(f"\n[CRITICAL ERROR] Could not read MASK at: {mask_path}")
-            print(
+            logging.error(f"\n[CRITICAL ERROR] Could not read MASK at: {mask_path}")
+            logging.error(
                 f"File size: {mask_path.stat().st_size if mask_path.exists() else 'Missing'} bytes"
             )
             raise ValueError(f"Corrupt file found: {mask_path}")
@@ -164,7 +169,7 @@ def load_model(model_path, device):
     encoder_name = None
 
     if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-        print("Found model configuration in file.")
+        logging.info("Found model configuration in file.")
         state_dict = checkpoint["state_dict"]
         arch_name = checkpoint.get("arch")
         encoder_name = checkpoint.get("encoder")
@@ -188,8 +193,8 @@ def load_model(model_path, device):
         clean_state_dict[new_k] = v
     state_dict = clean_state_dict
 
-    print(f"Architecture: {arch_name}")
-    print(f"Encoder: {encoder_name}")
+    logging.info(f"Architecture: {arch_name}")
+    logging.info(f"Encoder: {encoder_name}")
 
     if arch_name == "unetplusplus":
         model = smp.UnetPlusPlus(
@@ -293,21 +298,21 @@ def main(args):
     log_file = args.output_dir / "evaluate_results.log"
 
     if not test_img_dir.exists():
-        print(f"Error: Test image directory not found: {test_img_dir}")
+        logging.error(f"Error: Test image directory not found: {test_img_dir}")
         return
     if not test_mask_dir.exists():
-        print(f"Error: Test mask directory not found: {test_mask_dir}")
+        logging.error(f"Error: Test mask directory not found: {test_mask_dir}")
         return
 
     if args.model is None:
         models_dir = Path("models")
         if not models_dir.exists():
-            print("Error: 'models/' directory not found. Cannot auto-detect model.")
+            logging.error("Error: 'models/' directory not found. Cannot auto-detect model.")
             return
 
         files = list(models_dir.glob("*.pth"))
         if not files:
-            print(f"Error: No .pth files found in {models_dir}")
+            logging.error(f"Error: No .pth files found in {models_dir}")
             return
 
         # the checkpoint only used if no regular inference file (should not be the case)
@@ -315,13 +320,13 @@ def main(args):
         candidates = inference_files if inference_files else files
         candidates.sort(key=lambda f: f.name)
         args.model = candidates[-1]
-        print(f"No model specified. Using most recent: {args.model}")
+        logging.info(f"No model specified. Using most recent: {args.model}")
 
     if not args.model.exists():
-        print(f"Error: Model checkpoint not found: {args.model}")
+        logging.error(f"Error: Model checkpoint not found: {args.model}")
         return
 
-    print(f"Loading model from {args.model}...")
+    logging.info(f"Loading model from {args.model}...")
     model, encoder_name = load_model(args.model, DEVICE)
 
     test_dataset = FieldTestDataset(
@@ -330,7 +335,7 @@ def main(args):
 
     num_workers = min(multiprocessing.cpu_count(), args.num_workers)
     if args.num_workers > multiprocessing.cpu_count():
-        print(f"Reducing num-workers to {num_workers} (available cores)")
+        logging.warning(f"Reducing num-workers to {num_workers} (available cores)")
 
     test_loader = DataLoader(
         test_dataset,
@@ -341,12 +346,12 @@ def main(args):
         persistent_workers=True,
     )
 
-    print(f"Found {len(test_dataset)} test images.")
+    logging.info(f"Found {len(test_dataset)} test images.")
 
     iou_scores = []
     dice_scores = []
 
-    print(f"Evaluating model on test set (TTA={args.tta})...")
+    logging.info(f"Evaluating model on test set (TTA={args.tta})...")
     for images, masks in tqdm(test_loader, desc="Processing test images"):
         images = images.to(DEVICE, non_blocking=True)
         # Predict on batch
@@ -393,14 +398,14 @@ def main(args):
     results_text.append("=" * 60)
     results_text.append("")
 
-    print("\n" + "\n".join(results_text))
+    logging.info("\n" + "\n".join(results_text))
 
-    # append to log file
+    # append to log file (keep as-is - structured results persistence)
     with open(log_file, "a") as f:
         f.write("\n".join(results_text) + "\n")
 
-    print(f"Results appended to {log_file}")
-    print("=" * 60)
+    logging.info(f"Results appended to {log_file}")
+    logging.info("=" * 60)
 
     return iou_scores, dice_scores
 
