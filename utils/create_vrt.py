@@ -1,10 +1,17 @@
+"""Build a GDAL VRT mosaic from a directory of GeoTIFF or JPEG image files."""
+
+import logging
 from pathlib import Path
 from osgeo import gdal
 import argparse
 
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
 
 def parse_arguments(args=None):
-    """Parse user arguments using argparse"""
+    """Set up and parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Create a VRT mosaic from image files."
     )
@@ -23,13 +30,13 @@ def parse_arguments(args=None):
         "--crs",
         type=str,
         default="EPSG:27700",
-        help="CRS to assign to the VRT (default: EPSG:27700)",
+        help="CRS to assign to the VRT. Default: EPSG:27700 (British National Grid).",
     )
     return parser.parse_args(args)
 
 
 def main(args):
-    """Main function."""
+    """Build a GDAL VRT mosaic from TIFF/JPEG files in the specified directory."""
     img_dir = args.img_dir.resolve()
 
     if not img_dir.exists():
@@ -40,13 +47,13 @@ def main(args):
     if not image_files:
         raise ValueError(f"No TIFF or JPEG files found in {img_dir}")
 
-    print(f"Found {len(image_files)} image files in {img_dir}")
+    logging.info(f"Found {len(image_files)} image files in {img_dir}")
 
     output_vrt = img_dir / args.output_filename
-    print(f"Creating VRT at: {output_vrt}")
+    logging.info(f"Creating VRT at: {output_vrt}")
 
     target_crs = args.crs
-    print(f"Assigning CRS: {target_crs}")
+    logging.info(f"Assigning CRS: {target_crs}")
 
     try:
         options = gdal.BuildVRTOptions(
@@ -59,10 +66,10 @@ def main(args):
         )
         # Release the dataset so that the VRT is closed
         ds = None
-        print("VRT file created successfully!")
+        logging.info("VRT file created successfully!")
 
     except Exception as e:
-        print(f"Error creating VRT: {e}")
+        logging.error(f"Error creating VRT: {e}")
 
 
 if __name__ == "__main__":

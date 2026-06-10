@@ -1,3 +1,6 @@
+"""Chip a VRT mosaic into fixed-size GeoTIFF tiles with optional resampling."""
+
+import logging
 from rschip import ImageChip
 from pathlib import Path
 from tqdm import tqdm
@@ -35,32 +38,30 @@ def parse_arguments(args=None):
         "--chip-offset",
         type=int,
         default=384,
-        help="How much offset between chips, for example if size 512 and"
-        " offset of 384 this means an overlap of 128",
+        help="Step size (in pixels) between the start of adjacent chips. Must be less than --chip-size. "
+        "An overlap equal to (chip-size minus chip-offset) ensures boundary features are not clipped at the edge of every chip. Default: 384.",
     )
     parser.add_argument(
         "--resampling-factor",
         type=float,
-        default=1,
-        help="Whether to resample, e.g downscale chips. Default of 1 will not"
-        "downscale, a value of 0.5 would downscale a 0.125m image to 0.25m",
+        default=0.5,
+        help="Scale factor applied to chips at creation time. A value of 1.0 produces chips at the VRT resolution. "
+        "A value of 0.5 halves the resolution (e.g. 0.125 m/px / 0.25 m/px). Default: 0.5",
     )
     parser.add_argument(
         "--overwrite-output-dir",
         action="store_true",
-        help="Overwrite if output directory already exists. "
-        "If not set the process will stop if output directory already exists.",
-    )
-    parser.add_argument(
-        "--sample-scaler",
-        action="store_true",
-        help="Sample the image to compute scaling statistics and save as a JSON file",
+        help="If set, delete and recreate the output directory if it already exists. "
+        "If not set, the script will exit if the output directory is non-empty.",
     )
     return parser.parse_args(args)
 
 
 def main(args):
     """Main orchestration function."""
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
     vrt_path = args.vrt.resolve()
 
     if not vrt_path.exists():
@@ -77,14 +78,14 @@ def main(args):
     # if output directory is not empty, prompt user to overwrite
     if any(out_dir.iterdir()):
         if args.overwrite_output_dir:
-            print("Deleting existing files...")
+            logging.info("Deleting existing files...")
             for file in out_dir.iterdir():
                 if file.is_file():
                     file.unlink()
                 elif file.is_dir():
                     shutil.rmtree(file)
         else:
-            print("Operation cancelled.")
+            logging.warning("Operation cancelled.")
             sys.exit(1)
 
     # initialize rschip.ImageChip
@@ -126,11 +127,6 @@ def main(args):
                 }
             )
             ignore_df.to_csv(out_dir / "chips_ignore.csv", index=False)
-
-    if args.sample_scaler:
-        scaler = image_chipper.sample_to_scaler(int(1e5))
-        with open(out_dir / "scaler.json", "w") as f:
-            json.dump(scaler, f, indent=4)
 
 
 if __name__ == "__main__":

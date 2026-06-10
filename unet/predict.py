@@ -1,4 +1,7 @@
+"""Run inference with a trained segmentation model to produce a vector line GeoPackage of predicted boundaries."""
+
 import argparse
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -7,6 +10,10 @@ from datetime import datetime
 import threading
 import queue
 import multiprocessing
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 import torch
 import cv2
@@ -28,7 +35,8 @@ from albumentations.pytorch import ToTensorV2
 @contextmanager
 def suppress_stderr():
     """
-    Suppress C-level stderr output (like libtiff warnings).
+    Suppress C-level stderr output (e.g. libtiff warnings) by temporarily redirecting
+    file descriptor 2 to /dev/null. Python-level stderr is unaffected.
     """
     try:
         null_fd = os.open(os.devnull, os.O_RDWR)
@@ -88,8 +96,8 @@ def load_model(model_path, device):
         clean_state_dict[new_k] = v
     state_dict = clean_state_dict
 
-    print(f"Architecture: {arch_name}")
-    print(f"Encoder: {encoder_name}")
+    logging.info(f"Architecture: {arch_name}")
+    logging.info(f"Encoder: {encoder_name}")
 
     if arch_name == "unetplusplus":
         model = smp.UnetPlusPlus(
@@ -175,8 +183,9 @@ class ChipInferenceDataset(torch.utils.data.Dataset):
 
 def _writer_worker(write_queue, temp_dir):
     """
-    Runs in a background thread uses (prob_map, chip_path) pairs from
-    the queue and writes GeoTIFF prediction files without blocking inference.
+    Background thread worker that consumes (prob_map, chip_path, ...) items from
+    write_queue and writes them as single-band float32 GeoTIFF files, decoupling
+    disk I/O from GPU inference.
     """
     while True:
         item = write_queue.get()
@@ -226,10 +235,10 @@ def predict_chips(
     chip_files = sorted(input_dir.glob("*.tif"))
 
     if not chip_files:
-        print(f"No .tif files found in {input_dir}")
+        logging.warning(f"No .tif files found in {input_dir}")
         return []
 
-    print(
+    logging.info(
         f"Predicting on {len(chip_files)} chips "
         f"(batch_size={batch_size}, num_workers={num_workers})..."
     )
@@ -321,13 +330,13 @@ def _build_vrt_worker(args):
         gdal.BuildVRT(str(vrt_path), input_strs, options=options)
         return str(vrt_path)
     except Exception as e:
-        print(f"Worker VRT error: {e}")
+        logging.error(f"Worker VRT error: {e}")
         return None
 
 
 def build_vrt(vrt_path, input_files):
     """Build a VRT from a list of input files."""
-    print(f"Building VRT from {len(input_files)} files...")
+    logging.info(f"Building VRT from {len(input_files)} files...")
 
     if len(input_files) < 2000:
         try:
@@ -338,7 +347,7 @@ def build_vrt(vrt_path, input_files):
             gdal.BuildVRT(str(vrt_path), input_strs, options=options)
             return True
         except Exception as e:
-            print(f"Error building VRT: {e}")
+            logging.error(f"Error building VRT: {e}")
             return False
 
     # For massive datasets, parallelise the I/O bottleneck of reading thousands of TIFF headers
@@ -356,7 +365,7 @@ def build_vrt(vrt_path, input_files):
         temp_vrt = temp_dir / f"chunk_{i}.vrt"
         worker_args.append((temp_vrt, chunk))
 
-    print(
+    logging.info(
         f"Splitting VRT generation into {len(chunks)} chunks across multiple CPU cores..."
     )
     try:
@@ -367,7 +376,7 @@ def build_vrt(vrt_path, input_files):
                 if res:
                     intermediate_vrts.append(res)
 
-        print("Merging intermediate VRTs into final mosaic...")
+        logging.info("Merging intermediate VRTs into final mosaic...")
         options = gdal.BuildVRTOptions(
             resampleAlg=gdal.GRA_NearestNeighbour, resolution="highest"
         )
@@ -375,12 +384,16 @@ def build_vrt(vrt_path, input_files):
 
         return True
     except Exception as e:
-        print(f"Error building VRT: {e}")
+        logging.error(f"Error building VRT: {e}")
         return False
 
 
 def process_chunk_worker(args):
-    """Worker function for parallel VRT processing."""
+    """
+    Multiprocessing worker that reads one spatial chunk of the prediction VRT,
+    applies morphological closing, skeletonises the binary mask, removes junction
+    pixels, and returns a list of vectorised line coordinate arrays.
+    """
     (
         vrt_path,
         col_start,
@@ -451,7 +464,7 @@ def process_vrt_to_lines(
     vrt_path, chunk_size=2048, threshold=0.5, min_contour_length=5
 ):
     """Process VRT in chunks to create skeleton and vectorize."""
-    print("Opening VRT for chunked processing...")
+    logging.info("Opening VRT for chunked processing...")
 
     with rasterio.open(vrt_path) as src:
         width = src.width
@@ -459,7 +472,7 @@ def process_vrt_to_lines(
         transform = src.transform
         crs = src.crs
 
-        print(f"Mosaic dimensions: {width} x {height} pixels")
+        logging.info(f"Mosaic dimensions: {width} x {height} pixels")
 
         # calculate number of chunks
         n_chunks_x = int(np.ceil(width / chunk_size))
@@ -494,7 +507,7 @@ def process_vrt_to_lines(
 
         lines = []
         num_workers = max(1, multiprocessing.cpu_count() - 2)
-        print(
+        logging.info(
             f"Processing in {chunk_size}x{chunk_size} chunks with {num_workers} workers..."
         )
 
@@ -547,7 +560,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Run Inference and Stitch Results")
 
     parser.add_argument(
-        "--input-dir",
+        "--chip-dir",
         type=Path,
         required=True,
         help="Directory containing input chip images (.tif).",
@@ -578,19 +591,19 @@ def parse_arguments():
         "--threshold",
         type=float,
         default=0.5,
-        help="Probability threshold for binary mask. Default: 0.5",
+        help="Probability threshold for converting the model output to a binary mask. Default: 0.5.",
     )
     parser.add_argument(
         "--chunk-size",
         type=int,
         default=2048,
-        help="Chunk size for processing VRT. Default: 2048",
+        help="Tile size in pixels used when converting the prediction probability mosaic to vector lines. Larger values use more memory but may be faster. Default: 2048.",
     )
     parser.add_argument(
         "--min-contour-length",
         type=int,
         default=5,
-        help="Minimum number of vertices for a line prediction to be retained. Default: 5",
+        help="Minimum number of vertices a predicted line segment must have to be kept. Shorter segments are discarded. Default: 5.",
     )
     parser.add_argument(
         "--batch-size",
@@ -608,7 +621,7 @@ def parse_arguments():
         "--extend-lines",
         type=float,
         default=0.5,
-        help="Extend each predicted line at both ends by this distance in metres. Set to 0 to disable. Default: 0.5",
+        help="Extend each predicted line at both ends by this distance in metres. Small extensions help connect lines that stop just short of a junction. Set to 0 to disable. Default: 0.5.",
     )
 
     return parser.parse_args()
@@ -636,10 +649,10 @@ def main():
             if candidates:
                 candidates.sort(key=lambda f: f.name)
                 args.model = candidates[-1]
-                print(f"No model specified. Using most recent: {args.model}")
+                logging.info(f"No model specified. Using most recent: {args.model}")
 
     if not args.model or not args.model.exists():
-        print(f"Error: Model not found: {args.model}")
+        logging.error(f"Error: Model not found: {args.model}")
         return
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -657,13 +670,13 @@ def main():
             )
             if resp in ["u", "o"]:
                 break
-            print("Please enter 'u' to use existing or 'o' to overwrite.")
+            logging.warning("Please enter 'u' to use existing or 'o' to overwrite.")
 
         if resp == "u":
             use_existing = True
-            print("Skipping inference, using existing predictions...")
+            logging.info("Skipping inference, using existing predictions...")
         else:
-            print("Overwriting existing predictions...")
+            logging.info("Overwriting existing predictions...")
             shutil.rmtree(temp_dir)
             temp_dir.mkdir(parents=True, exist_ok=True)
     else:
@@ -673,21 +686,21 @@ def main():
         pred_files = list(temp_dir.glob("*.tif"))
     else:
         # 2. Load Model
-        print(f"Loading model from {args.model}...")
+        logging.info(f"Loading model from {args.model}...")
         model = load_model(args.model, device)
 
         if device == "cuda":
             try:
                 model = torch.compile(model)
-                print("Model compiled with torch.compile()")
+                logging.info("Model compiled with torch.compile()")
             except Exception as e:
-                print(f"torch.compile() unavailable, skipping: {e}")
+                logging.warning(f"torch.compile() unavailable, skipping: {e}")
 
         # 3. Predict
-        print("Starting inference...")
+        logging.info("Starting inference...")
         pred_files = predict_chips(
             model,
-            args.input_dir,
+            args.chip_dir,
             temp_dir,
             device,
             batch_size=args.batch_size,
@@ -696,7 +709,7 @@ def main():
         )
 
     if not pred_files:
-        print("No predictions generated. Exiting.")
+        logging.warning("No predictions generated. Exiting.")
         return
 
     # 4. Stitch (VRT)
@@ -722,21 +735,21 @@ def main():
         model_name = args.model.stem
         out_gpkg = args.output_dir / f"{timestamp}_{model_name}_boundaries.gpkg"
 
-        print(f"Saving {len(lines)} boundaries to {out_gpkg}...")
+        logging.info(f"Saving {len(lines)} boundaries to {out_gpkg}...")
         gdf = gpd.GeoDataFrame(geometry=lines, crs=crs)
         gdf.to_file(out_gpkg, driver="GPKG")
-        print("Done.")
+        logging.info("Done.")
     else:
-        print("No lines detected.")
+        logging.warning("No lines detected.")
 
     # 8. Cleanup
     if not args.keep_preds:
-        print("Cleaning up temporary files...")
+        logging.info("Cleaning up temporary files...")
         shutil.rmtree(temp_dir)
         if vrt_path.exists():
             vrt_path.unlink()
     else:
-        print(f"Temporary files retained in {temp_dir}")
+        logging.info(f"Temporary files retained in {temp_dir}")
 
 
 if __name__ == "__main__":

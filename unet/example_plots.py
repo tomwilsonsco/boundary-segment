@@ -1,3 +1,5 @@
+"""Generate 6-panel analysis plots comparing chips, masks, predictions, and ground truth boundaries."""
+
 import os
 import shutil
 import sys
@@ -13,12 +15,18 @@ from shapely.geometry import box
 from tqdm import tqdm
 from pathlib import Path
 from contextlib import contextmanager
+import logging
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 @contextmanager
 def suppress_stderr():
     """
-    Suppress C-level stderr output (like libtiff warnings).
+    Suppress C-level stderr output (e.g. libtiff warnings) by temporarily redirecting
+    file descriptor 2 to /dev/null. Python-level stderr is unaffected.
     """
     try:
         null_fd = os.open(os.devnull, os.O_RDWR)
@@ -53,7 +61,7 @@ def sample_and_copy_chips(src_dir, dst_dir, num_samples=50, seed=42):
     all_images = list(src_dir.glob("*.tif"))
 
     if len(all_images) < num_samples:
-        print(f"Warning: Only {len(all_images)} images available, using all.")
+        logging.warning(f"Warning: Only {len(all_images)} images available, using all.")
         sampled = all_images
     else:
         sampled = random.sample(all_images, num_samples)
@@ -63,7 +71,7 @@ def sample_and_copy_chips(src_dir, dst_dir, num_samples=50, seed=42):
     dst_dir.mkdir(parents=True, exist_ok=True)
 
     sampled_basenames = []
-    print(f"Copying {len(sampled)} chips to {dst_dir}...")
+    logging.info(f"Copying {len(sampled)} chips to {dst_dir}...")
     for src_path in tqdm(sampled):
         basename = src_path.name
         dst_path = dst_dir / basename
@@ -85,7 +93,7 @@ def get_mask_paths(basenames, mask_dir):
         if mask_path.exists():
             mask_paths[basename] = mask_path
         else:
-            print(f"Warning: Mask not found for {basename}")
+            logging.warning(f"Warning: Mask not found for {basename}")
     return mask_paths
 
 
@@ -95,18 +103,18 @@ def load_parcels(parcels_path):
     Returns:
         GeoDataFrame of parcels
     """
-    print(f"Loading parcels from {parcels_path}...")
+    logging.info(f"Loading parcels from {parcels_path}...")
     return gpd.read_file(parcels_path)
 
 
 def run_unet_predict(input_dir, output_dir, model_path=None):
     """Run unet/predict.py script."""
-    print("\nRunning UNet prediction...")
+    logging.info("\nRunning UNet prediction...")
 
     cmd = [
         sys.executable,
         "unet/predict.py",
-        "--input-dir",
+        "--chip-dir",
         str(input_dir),
         "--output-dir",
         str(output_dir),
@@ -122,17 +130,17 @@ def run_unet_predict(input_dir, output_dir, model_path=None):
     if result.returncode != 0:
         pred_files = list(temp_pred_dir.glob("*.tif"))
         if len(pred_files) > 0:
-            print(
+            logging.warning(
                 f"Warning: predict.py exited with code {result.returncode}, but {len(pred_files)} predictions found. Continuing..."
             )
         else:
-            print(
+            logging.error(
                 f"Prediction process failed.\nStdout: {result.stdout}\nStderr: {result.stderr}"
             )
             raise RuntimeError(
                 f"Prediction failed with return code {result.returncode} and no predictions found"
             )
-    print("Prediction complete.")
+    logging.info("Prediction complete.")
 
 
 def get_latest_output_gpkg(output_dir):
@@ -219,7 +227,7 @@ def create_6panel_plot(
                 pred = src.read(1)
     else:
         pred = np.zeros_like(mask_binary)
-        print(f"Warning: Prediction not found for {basename}")
+        logging.warning(f"Warning: Prediction not found for {basename}")
 
     pred_binary = (pred > 0.5).astype(np.float32)
 
@@ -350,40 +358,47 @@ def parse_arguments():
         "--dataset-dir",
         type=Path,
         default=Path("inputs/images/dataset"),
-        help="Root dataset directory containing images/ and masks/ subdirs",
+        help="Root dataset directory containing images/ and masks/ subdirs. Default: inputs/images/dataset.",
     )
     parser.add_argument(
-        "--parcels-gpkg",
+        "--parcels",
         type=Path,
-        default=Path("inputs/aoi_parcels.gpkg"),
-        help="Path to ground truth parcels GPKG",
+        help="Path to the land parcel polygons file (.gpkg or .shp). Used for overlay in the visualisation panels.",
     )
     parser.add_argument(
         "--model",
         type=Path,
         default=None,
-        help="Path to model checkpoint (optional, defaults to latest)",
+        help="Path to the model .pth file to use for prediction. Default: most recent file in models/.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("outputs/unet_screenshots"),
-        help="Directory to save screenshots",
+        help="Directory to save the 6-panel analysis PNG plots. Default: outputs/unet_screenshots.",
     )
     parser.add_argument(
         "--temp-dir",
         type=Path,
         default=Path("outputs/temp_inference"),
-        help="Temporary directory for inference",
+        help="Temporary directory used to store sampled chips and probability prediction TIFFs during the run. Default: outputs/temp_inference.",
     )
     parser.add_argument(
-        "--num-samples", type=int, default=50, help="Number of samples to plot"
+        "--num-samples",
+        type=int,
+        default=50,
+        help="Number of test set chips to randomly sample and generate 6-panel analysis plots for. Default: 50.",
     )
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducible chip sampling. Default: 42.",
+    )
     parser.add_argument(
         "--plots-only",
         action="store_true",
-        help="Skip sampling and prediction, only regenerate plots from existing temp data",
+        help="Skip chip sampling and model inference. Regenerate plots using chips and predictions already present in --temp-dir. Useful for tweaking plot appearance without re-running inference.",
     )
 
     return parser.parse_args()
@@ -391,11 +406,11 @@ def parse_arguments():
 
 def main(args):
     """Main function to generate example screenshots."""
-    print("=" * 60)
-    print("UNet Example Screenshot Generator")
+    logging.info("=" * 60)
+    logging.info("UNet Example Screenshot Generator")
     if args.plots_only:
-        print("(Plots only mode - using existing chips and predictions)")
-    print("=" * 60)
+        logging.info("(Plots only mode - using existing chips and predictions)")
+    logging.info("=" * 60)
 
     test_img_dir = args.dataset_dir / "images/test"
     test_mask_dir = args.dataset_dir / "masks/test"
@@ -405,54 +420,54 @@ def main(args):
     setup_directories(test_chips_dir, args.output_dir)
 
     if args.plots_only:
-        print("\n[Step 1] Using existing chips in test_chips directory...")
+        logging.info("\n[Step 1] Using existing chips in test_chips directory...")
         chip_files = list(test_chips_dir.glob("*.tif"))
         sampled_basenames = [f.name for f in chip_files]
-        print(f"Found {len(sampled_basenames)} existing chips")
+        logging.info(f"Found {len(sampled_basenames)} existing chips")
     else:
-        print("\n[Step 1] Sampling and copying chips...")
+        logging.info("\n[Step 1] Sampling and copying chips...")
         sampled_basenames = sample_and_copy_chips(
             test_img_dir, test_chips_dir, args.num_samples, args.seed
         )
 
     # mask paths
-    print("\n[Step 2] Getting mask paths...")
+    logging.info("\n[Step 2] Getting mask paths...")
     mask_paths = get_mask_paths(sampled_basenames, test_mask_dir)
-    print(f"Found {len(mask_paths)} masks for {len(sampled_basenames)} chips")
+    logging.info(f"Found {len(mask_paths)} masks for {len(sampled_basenames)} chips")
 
     # parcels
-    print("\n[Step 3] Loading parcels...")
-    parcels_gdf = load_parcels(args.parcels_gpkg)
-    print(f"Loaded {len(parcels_gdf)} parcels")
+    logging.info("\n[Step 3] Loading parcels...")
+    parcels_gdf = load_parcels(args.parcels)
+    logging.info(f"Loaded {len(parcels_gdf)} parcels")
 
     if args.plots_only:
-        print("\n[Step 4] Skipping prediction (plots-only mode)...")
+        logging.info("\n[Step 4] Skipping prediction (plots-only mode)...")
     else:
         # pred
-        print("\n[Step 4] Running UNet prediction...")
+        logging.info("\n[Step 4] Running UNet prediction...")
         run_unet_predict(test_chips_dir, args.temp_dir, args.model)
 
     # files
-    print("\n[Step 5] Getting prediction files...")
+    logging.info("\n[Step 5] Getting prediction files...")
     pred_files = list(temp_pred_dir.glob("*.tif"))
     pred_map = {p.name: p for p in pred_files}
-    print(f"Found {len(pred_map)} prediction files")
+    logging.info(f"Found {len(pred_map)} prediction files")
 
     # load output gpkg
-    print("\n[Step 6] Loading prediction lines...")
+    logging.info("\n[Step 6] Loading prediction lines...")
     try:
         output_gpkg = get_latest_output_gpkg(args.temp_dir)
-        print(f"Loading predictions from: {output_gpkg}")
+        logging.info(f"Loading predictions from: {output_gpkg}")
         pred_lines_gdf = gpd.read_file(output_gpkg)
-        print(f"Loaded {len(pred_lines_gdf)} predicted boundary lines")
+        logging.info(f"Loaded {len(pred_lines_gdf)} predicted boundary lines")
     except FileNotFoundError:
-        print(
+        logging.warning(
             "Warning: No output gpkg found (merge may have failed). Plot 6 will show no pred lines."
         )
         pred_lines_gdf = gpd.GeoDataFrame(geometry=[], crs="EPSG:27700")
 
     # plots
-    print("\n[Step 7] Creating 6-panel plots...")
+    logging.info("\n[Step 7] Creating 6-panel plots...")
     successful = 0
     for basename in tqdm(sampled_basenames):
         if basename not in mask_paths:
@@ -477,12 +492,12 @@ def main(args):
             )
             successful += 1
         except Exception as e:
-            print(f"\nError processing {basename}: {e}")
+            logging.error(f"\nError processing {basename}: {e}")
 
-    print("\n" + "=" * 60)
-    print(f"Complete! Generated {successful} analysis plots.")
-    print(f"Output directory: {args.output_dir}")
-    print("=" * 60)
+    logging.info("\n" + "=" * 60)
+    logging.info(f"Complete! Generated {successful} analysis plots.")
+    logging.info(f"Output directory: {args.output_dir}")
+    logging.info("=" * 60)
 
 
 if __name__ == "__main__":

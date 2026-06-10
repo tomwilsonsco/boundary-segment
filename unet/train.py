@@ -1,3 +1,6 @@
+"""Train a segmentation model (U-Net / UNet++ / DeepLabV3+ / FPN) on chip images and binary boundary masks."""
+
+import logging
 import os
 import random
 import torch
@@ -14,6 +17,10 @@ from torch.amp import autocast, GradScaler
 from contextlib import contextmanager
 import argparse
 from pathlib import Path
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 @contextmanager
@@ -59,14 +66,14 @@ class FieldDataset(Dataset):
             mask = cv2.imread(str(mask_path), 0)
 
         if image is None:
-            print(f"\n[CRITICAL ERROR] Could not read IMAGE at: {img_path}")
-            print(
+            logging.error(f"\n[CRITICAL ERROR] Could not read IMAGE at: {img_path}")
+            logging.error(
                 f"File size: {img_path.stat().st_size if img_path.exists() else 'Missing'} bytes"
             )
             raise ValueError(f"Corrupt file found: {img_path}")
 
         if mask is None:
-            print(f"Could not read MASK at: {mask_path}")
+            logging.error(f"Could not read MASK at: {mask_path}")
             raise ValueError(f"Corrupt file found: {mask_path}")
 
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -87,6 +94,7 @@ class FieldDataset(Dataset):
 
 
 def get_training_augmentation():
+    """Return the albumentations pipeline used for training: flips, rotation, affine, brightness, and ImageNet normalisation."""
     return albu.Compose(
         [
             albu.HorizontalFlip(p=0.5),
@@ -104,6 +112,7 @@ def get_training_augmentation():
 
 
 def get_validation_augmentation():
+    """Return the albumentations pipeline used for validation: ImageNet normalisation only (no geometric augmentation)."""
     return albu.Compose(
         [
             # imageNet normalization
@@ -129,9 +138,9 @@ def parse_arguments(args=None):
     parser.add_argument(
         "--loss-method",
         type=str,
-        default="focal_dice",
+        default="bce_dice",
         choices=["focal_dice", "bce_dice", "bce_only"],
-        help="Loss function combination to use. Default: focal_dice.",
+        help="Loss function combination to use. Default: bce_dice.",
     )
     parser.add_argument(
         "--pos-weight",
@@ -147,20 +156,21 @@ def parse_arguments(args=None):
         type=str,
         default="unetplusplus",
         choices=["unet", "unetplusplus", "deeplabv3plus", "fpn"],
-        help="Model architecture. Default: unetplusplus",
+        help="Model architecture. Default: unetplusplus.",
     )
     parser.add_argument(
         "--encoder",
         type=str,
         default="efficientnet-b3",
         help="Encoder backbone (e.g. efficientnet-b3, resnet34). "
-        "See Segment Models Pytorch help for options. Default: efficientnet-b3.",
+        "See the Segmentation Models PyTorch documentation for all available encoders. Default: efficientnet-b3.",
     )
     parser.add_argument(
         "--weights",
         type=str,
         default="imagenet",
-        help="Encoder pretrained weights. Best not changed. Default: imagenet.",
+        help="Pre-trained weight source for the encoder backbone. Changing this is not recommended. "
+        "ImageNet weights give the best starting point for aerial imagery. Default: imagenet.",
     )
 
     parser.add_argument(
@@ -170,7 +180,7 @@ def parse_arguments(args=None):
         help="Number of epochs to train for. Default: 30.",
     )
     parser.add_argument(
-        "--batch-size", type=int, default=8, help="Batch size for training. Default 8."
+        "--batch-size", type=int, default=8, help="Batch size for training. Default: 8."
     )
     parser.add_argument(
         "--num-workers",
@@ -179,7 +189,10 @@ def parse_arguments(args=None):
         help="Number of workers for DataLoader. Defaults to min(os.cpu_count(), 4).",
     )
     parser.add_argument(
-        "--lr", type=float, default=1e-4, help="Learning rate. Default 0.0001."
+        "--lr",
+        type=float,
+        default=1e-4,
+        help="Starting learning rate for the AdamW optimiser. Default: 0.0001.",
     )
     parser.add_argument(
         "--accum-steps",
@@ -215,7 +228,7 @@ def parse_arguments(args=None):
         "--output-dir",
         type=Path,
         default=Path("models"),
-        help="Directory to save models. Default 'models'.",
+        help="Directory to save trained model files and the training loss plot. Default: models.",
     )
     parser.add_argument(
         "--resume",
@@ -266,16 +279,16 @@ def main(args):
         torch.cuda.manual_seed_all(args.seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-        print(
+        logging.info(
             f"Seed set to {args.seed} (deterministic mode enabled, cuDNN benchmarking disabled)"
         )
 
     if torch.cuda.is_available():
         if args.seed is None:
             torch.backends.cudnn.benchmark = True
-            print("cuDNN benchmarking enabled")
+            logging.info("cuDNN benchmarking enabled")
         torch.set_float32_matmul_precision("high")
-        print("TF32 matmul precision enabled")
+        logging.info("TF32 matmul precision enabled")
 
     # ensure output directory exists
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -294,11 +307,11 @@ def main(args):
     checkpoint_path = args.output_dir / f"{base_name}_checkpoint.pth"
     loss_plot_path = args.output_dir / f"{base_name}_loss.png"
 
-    print(f"Experiment: {args.desc if args.desc else 'N/A'}")
-    print(f"Model architecture: {args.arch}")
-    print(f"Model will be saved to: {model_save_path}")
-    print(f"Checkpoint will be saved to: {checkpoint_path}")
-    print(f"Loss plot will be saved to: {loss_plot_path}")
+    logging.info(f"Experiment: {args.desc if args.desc else 'N/A'}")
+    logging.info(f"Model architecture: {args.arch}")
+    logging.info(f"Model will be saved to: {model_save_path}")
+    logging.info(f"Checkpoint will be saved to: {checkpoint_path}")
+    logging.info(f"Loss plot will be saved to: {loss_plot_path}")
 
     train_dataset = FieldDataset(
         args.dataset_dir / "images/train",
@@ -318,13 +331,13 @@ def main(args):
     else:
         num_workers = args.num_workers
         if num_workers > num_cores:
-            print(
+            logging.warning(
                 f"Warning: --num-workers ({num_workers}) is greater than available cores ({num_cores}). "
                 f"Using {num_cores} to avoid resource overallocation."
             )
             num_workers = num_cores
 
-    print(f"Using {num_workers} workers for data loading.")
+    logging.info(f"Using {num_workers} workers for data loading.")
 
     generator = torch.Generator()
     if args.seed is not None:
@@ -352,7 +365,7 @@ def main(args):
         worker_init_fn=_seed_worker if args.seed is not None else None,
     )
 
-    print(
+    logging.info(
         f"Training on {len(train_dataset)} images, Validating on {len(val_dataset)} images."
     )
 
@@ -378,16 +391,16 @@ def main(args):
             f"Unknown architecture: {args.arch}. Supported: unet, unetplusplus, deeplabv3plus, fpn"
         )
 
-    print(f"Using {args.arch} architecture with {args.encoder} encoder")
+    logging.info(f"Using {args.arch} architecture with {args.encoder} encoder")
     model.to(DEVICE)
 
     if args.compile and DEVICE == "cuda":
-        print("Compiling model with torch.compile (reduce-overhead mode)...")
+        logging.info("Compiling model with torch.compile (reduce-overhead mode)...")
         model = torch.compile(model, mode="reduce-overhead")
-        print("Model compiled.")
+        logging.info("Model compiled.")
 
     if args.loss_method == "bce_only":
-        print(f"Using loss method: BCE only (pos_weight={args.pos_weight})")
+        logging.info(f"Using loss method: BCE only (pos_weight={args.pos_weight})")
         bce_only_loss = smp.losses.SoftBCEWithLogitsLoss(
             pos_weight=torch.tensor([args.pos_weight]).to(DEVICE)
         )
@@ -396,12 +409,14 @@ def main(args):
     else:
         dice_loss = smp.losses.DiceLoss(mode="binary", from_logits=True)
         if args.loss_method == "bce_dice":
-            print(f"Using loss method: BCE + Dice (pos_weight={args.pos_weight})")
+            logging.info(
+                f"Using loss method: BCE + Dice (pos_weight={args.pos_weight})"
+            )
             secondary_loss = smp.losses.SoftBCEWithLogitsLoss(
                 pos_weight=torch.tensor([args.pos_weight]).to(DEVICE)
             )
         else:
-            print("Using loss method: Focal + Dice")
+            logging.info("Using loss method: Focal + Dice")
             secondary_loss = smp.losses.FocalLoss(mode="binary", alpha=0.85, gamma=1.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
 
@@ -414,8 +429,8 @@ def main(args):
         threshold=0.001,
         threshold_mode="rel",
     )
-    print(f"Initial learning rate: {args.lr}")
-    print(
+    logging.info(f"Initial learning rate: {args.lr}")
+    logging.info(
         f"LR scheduler: ReduceLROnPlateau (factor=0.5, patience={args.lr_patience}, threshold=0.1% rel improvement)"
     )
 
@@ -428,7 +443,7 @@ def main(args):
 
     # Check if we should resume from existing checkpoint
     if args.resume and args.resume.exists():
-        print(f"\nResuming from checkpoint: {args.resume}")
+        logging.info(f"\nResuming from checkpoint: {args.resume}")
         try:
             checkpoint = torch.load(args.resume, map_location=DEVICE)
 
@@ -441,51 +456,55 @@ def main(args):
                 epochs_no_improve = checkpoint["epochs_no_improve"]
                 train_losses = checkpoint["train_losses"]
                 val_losses = checkpoint["val_losses"]
-                print(
+                logging.info(
                     f"Successfully loaded checkpoint from epoch {checkpoint['epoch']}"
                 )
-                print(
+                logging.info(
                     f"Resuming from epoch {start_epoch} with best val loss: {best_val_loss:.4f}"
                 )
-                print(f"Will save to new checkpoint: {checkpoint_path}\n")
+                logging.info(f"Will save to new checkpoint: {checkpoint_path}\n")
             elif isinstance(checkpoint, dict) and "state_dict" in checkpoint:
                 model.load_state_dict(checkpoint["state_dict"])
-                print("Loaded model weights only (from inference model file).")
-                print("Optimizer, learning rate, and epochs will start from scratch.\n")
+                logging.info("Loaded model weights only (from inference model file).")
+                logging.info(
+                    "Optimizer, learning rate, and epochs will start from scratch.\n"
+                )
             else:
                 model.load_state_dict(checkpoint)
-                print("Loaded model weights only (old format - no optimizer state)")
-                print("Warning: Optimizer will restart from scratch\n")
+                logging.info(
+                    "Loaded model weights only (old format - no optimizer state)"
+                )
+                logging.warning("Optimizer will restart from scratch\n")
         except Exception as e:
-            print(f"Warning: Could not load checkpoint: {e}")
-            print("Starting training from scratch with pretrained encoder...\n")
+            logging.warning(f"Could not load checkpoint: {e}")
+            logging.info("Starting training from scratch with pretrained encoder...\n")
     elif args.resume:
-        print(f"\nWarning: Checkpoint specified but not found: {args.resume}")
-        print("Starting training from scratch with pretrained encoder...\n")
+        logging.warning(f"\nCheckpoint specified but not found: {args.resume}")
+        logging.info("Starting training from scratch with pretrained encoder...\n")
     else:
-        print("\nStarting training from scratch with pretrained encoder...\n")
+        logging.info("\nStarting training from scratch with pretrained encoder...\n")
 
     # use_amp only if using gpu
     use_amp = DEVICE == "cuda"
     if use_amp and args.bf16:
         amp_dtype = torch.bfloat16
         scaler = GradScaler(enabled=False)
-        print("Mixed precision training enabled (BF16)")
+        logging.info("Mixed precision training enabled (BF16)")
     elif use_amp:
         amp_dtype = torch.float16
         scaler = GradScaler(enabled=True)
-        print("Mixed precision training enabled (FP16)")
+        logging.info("Mixed precision training enabled (FP16)")
     else:
         amp_dtype = torch.float32
         scaler = GradScaler(enabled=False)
-        print("Training with FP32 (CPU mode)")
+        logging.info("Training with FP32 (CPU mode)")
 
     if args.accum_steps > 1:
-        print(
+        logging.info(
             f"Gradient accumulation enabled: {args.accum_steps} steps (effective batch size: {args.batch_size * args.accum_steps})"
         )
 
-    print(f"Early stopping patience: {args.early_stop_patience} epochs")
+    logging.info(f"Early stopping patience: {args.early_stop_patience} epochs")
     for epoch in range(start_epoch, args.epochs):
 
         model.train()
@@ -550,12 +569,12 @@ def main(args):
         scheduler.step(avg_val_loss)
         current_lr = optimizer.param_groups[0]["lr"]
 
-        print(
+        logging.info(
             f"Epoch {epoch+1} Summary: Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | LR: {current_lr:.6f}"
         )
 
         if avg_val_loss < best_val_loss:
-            print(
+            logging.info(
                 f"Validation Loss improved ({best_val_loss:.4f} -> {avg_val_loss:.4f}). Saving checkpoint..."
             )
             best_val_loss = avg_val_loss
@@ -585,19 +604,19 @@ def main(args):
             torch.save(inference_config, model_save_path)
         else:
             epochs_no_improve += 1
-            print(f"No improvement for {epochs_no_improve} epoch(s)")
+            logging.info(f"No improvement for {epochs_no_improve} epoch(s)")
 
             if epochs_no_improve >= args.early_stop_patience:
-                print(f"\nEarly stopping triggered after {epoch+1} epochs")
-                print(f"Best validation loss: {best_val_loss:.4f}")
+                logging.info(f"\nEarly stopping triggered after {epoch+1} epochs")
+                logging.info(f"Best validation loss: {best_val_loss:.4f}")
                 break
 
-        print("-" * 30)
+        logging.info("-" * 30)
 
-    print(f"Training Complete. Best Validation Loss: {best_val_loss:.4f}")
+    logging.info(f"Training Complete. Best Validation Loss: {best_val_loss:.4f}")
 
     # plot / save training curves
-    print(f"Saving training loss plot to {loss_plot_path}...")
+    logging.info(f"Saving training loss plot to {loss_plot_path}...")
     plt.figure(figsize=(10, 6))
     epochs_range = range(1, len(train_losses) + 1)
     plt.plot(epochs_range, train_losses, "b-", label="Training Loss", linewidth=2)
@@ -610,7 +629,7 @@ def main(args):
     plt.tight_layout()
     plt.savefig(loss_plot_path, dpi=300, bbox_inches="tight")
     plt.close()
-    print("Training loss plot saved successfully.")
+    logging.info("Training loss plot saved successfully.")
 
 
 if __name__ == "__main__":

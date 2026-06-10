@@ -1,9 +1,16 @@
+"""Assign a CRS to JPEG images and convert them to GeoTIFF format."""
+
+import logging
 from pathlib import Path
 from osgeo import gdal
 from tqdm import tqdm
 import multiprocessing
 from functools import partial
 import argparse
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 def process_image(file_path, output_dir, target_crs):
@@ -26,7 +33,7 @@ def process_image(file_path, output_dir, target_crs):
             creationOptions=creation_options,
         )
     except Exception as e:
-        print(f"Error processing {file_path.name}: {e}")
+        logging.error(f"Error processing {file_path.name}: {e}")
 
 
 def parse_arguments(args=None):
@@ -38,7 +45,7 @@ def parse_arguments(args=None):
         "--img-dir",
         type=Path,
         required=True,
-        help="Path to the folder containing images",
+        help="Path to the folder containing *.jpg / *.JPG images to process",
     )
     parser.add_argument(
         "--output-subdir",
@@ -47,9 +54,9 @@ def parse_arguments(args=None):
         help="Name of the output subfolder (default: tiff_with_crs)",
     )
     parser.add_argument(
-        "--target-crs",
+        "--crs",
         default="EPSG:27700",
-        help="Target CRS (default: EPSG:27700)",
+        help="Target CRS to assign to output GeoTIFFs. Default: EPSG:27700 (British National Grid).",
     )
     parser.add_argument(
         "--singleprocessor",
@@ -76,15 +83,15 @@ def main(args):
     output_dir = img_dir / args.output_subdir
     output_dir.mkdir(exist_ok=True)
 
-    target_crs = args.target_crs
-    print(f"Found {len(image_files)} JPG files to process in {img_dir}")
+    crs = args.crs
+    logging.info(f"Found {len(image_files)} JPG files to process in {img_dir}")
 
-    process_func = partial(process_image, output_dir=output_dir, target_crs=target_crs)
+    process_func = partial(process_image, output_dir=output_dir, target_crs=crs)
 
     if not args.singleprocessor:
         # Use available cores - 1
         num_workers = max(1, multiprocessing.cpu_count() - 1)
-        print(f"Using {num_workers} workers for processing.")
+        logging.info(f"Using {num_workers} workers for processing.")
 
         with multiprocessing.Pool(num_workers) as pool:
             list(
@@ -95,11 +102,11 @@ def main(args):
                 )
             )
     else:
-        print("Using single process.")
+        logging.info("Using single process.")
         for file_path in tqdm(image_files, desc="Assigning CRS and converting to TIFF"):
             process_func(file_path)
 
-    print("\nProcessing complete.")
+    logging.info("\nProcessing complete.")
 
 
 if __name__ == "__main__":
