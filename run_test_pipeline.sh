@@ -60,8 +60,7 @@ python utils/chip_image.py \
     --chip-size 512 \
     --chip-offset 384 \
     --resampling-factor 0.5 \
-    --overwrite-output-dir \
-    --sample-scaler
+    --overwrite-output-dir
 
 # 4. Create Masks
 # Creates binary masks in ${CHIPS_DIR}/masks

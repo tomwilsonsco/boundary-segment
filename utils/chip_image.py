@@ -128,12 +128,6 @@ def main(args):
             )
             ignore_df.to_csv(out_dir / "chips_ignore.csv", index=False)
 
-    if args.sample_scaler:
-        scaler = image_chipper.sample_to_scaler(int(1e5))
-        with open(out_dir / "scaler.json", "w") as f:
-            json.dump(scaler, f, indent=4)
-
-
 if __name__ == "__main__":
     parsed_args = parse_arguments()
     main(parsed_args)

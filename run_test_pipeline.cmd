@@ -62,7 +62,7 @@ echo VRT created: %VRT_FILE%
 REM 3. Chip Image
 echo [%DATE% %TIME%] [Step 3] Chipping VRT into tiles... >> "%LOG_FILE%"
 echo [Step 3] Chipping VRT into tiles...
-python utils\chip_image.py --vrt "%VRT_FILE%" --output-subdir "chips" --chip-size 512 --chip-offset 384 --resampling-factor 0.5 --overwrite-output-dir --sample-scaler
+python utils\chip_image.py --vrt "%VRT_FILE%" --output-subdir "chips" --chip-size 512 --chip-offset 384 --resampling-factor 0.5 --overwrite-output-dir
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 REM 4. Create Masks
