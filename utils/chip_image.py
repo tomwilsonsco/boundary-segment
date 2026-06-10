@@ -128,6 +128,7 @@ def main(args):
             )
             ignore_df.to_csv(out_dir / "chips_ignore.csv", index=False)
 
+
 if __name__ == "__main__":
     parsed_args = parse_arguments()
     main(parsed_args)
