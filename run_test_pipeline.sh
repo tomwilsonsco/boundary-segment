@@ -1,7 +1,7 @@
 # run_test_pipeline.sh
 # run the full pipeline covered in the README.md on a dataset for testing purposes.
 
-# set -euo pipefail
+set -euo pipefail
 
 # adjust to relative paths
 SOURCE_IMAGES_DIR="inputs/images/gretna/12.5cm Aerial Photo"
