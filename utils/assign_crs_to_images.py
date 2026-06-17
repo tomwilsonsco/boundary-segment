@@ -44,11 +44,17 @@ def process_image(file_path, output_dir, target_crs, mask_wkt=None):
         )
     except Exception as e:
         logging.error(f"Error processing {file_path.name}: {e}")
+        if output_file.exists():
+            output_file.unlink()
         return None
 
     # If prediction mask is provided, check intersection
     if mask_wkt is not None:
-        mask_geom = wkt.loads(mask_wkt)
+        # Cache parsed geometry per worker process (avoids re-parsing WKT for every image)
+        if not hasattr(process_image, "_mask_geom") or getattr(process_image, "_mask_wkt", None) != mask_wkt:
+            process_image._mask_wkt = mask_wkt
+            process_image._mask_geom = wkt.loads(mask_wkt)
+        mask_geom = process_image._mask_geom
         with rasterio.open(output_file) as src:
             bounds = src.bounds
         image_bbox = box(*bounds)

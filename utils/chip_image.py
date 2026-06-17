@@ -131,8 +131,12 @@ def main(args):
             if not mask_path.exists():
                 raise ValueError(f"Prediction mask not found: {mask_path}")
             mask_gdf = gpd.read_file(mask_path)
+            if mask_gdf.empty:
+                raise ValueError(f"Prediction mask contains no features: {mask_path}")
             mask_gdf = mask_gdf.to_crs(vrt_crs)
             mask_geom = mask_gdf.union_all()
+            if mask_geom is None or mask_geom.is_empty:
+                raise ValueError(f"Prediction mask geometry is empty after union: {mask_path}")
 
         # Collect all ignore records
         all_ignore_records = []

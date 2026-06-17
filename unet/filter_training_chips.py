@@ -127,7 +127,7 @@ def main(args):
     if csv_path.exists():
         try:
             existing_df = pd.read_csv(csv_path)
-            conditions_to_keep = ["outside image bounds", "outside training"]
+            conditions_to_keep = ["outside image bounds", "outside training", "outside prediction mask"]
             if "remove_condition" in existing_df.columns:
                 kept_df = existing_df[
                     existing_df["remove_condition"].isin(conditions_to_keep)

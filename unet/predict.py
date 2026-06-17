@@ -738,10 +738,14 @@ def main():
 
     # 7. Clip to prediction mask (if provided)
     if args.prediction_mask is not None:
+        if crs is None:
+            raise ValueError("Prediction output CRS is undefined. Cannot reproject prediction mask.")
         mask_path = args.prediction_mask.resolve()
         if not mask_path.exists():
             raise ValueError(f"Prediction mask not found: {mask_path}")
         mask_gdf = gpd.read_file(mask_path)
+        if mask_gdf.empty:
+            raise ValueError(f"Prediction mask contains no features: {mask_path}")
         mask_gdf = mask_gdf.to_crs(crs)
         mask_union = mask_gdf.union_all()
         if lines:
