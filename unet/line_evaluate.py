@@ -178,7 +178,9 @@ def main(args):
         mask_gdf = mask_gdf.to_crs(crs)
         mask_union = mask_gdf.union_all()
         parcels_gdf = gpd.clip(parcels_gdf, mask_union)
-        logging.info(f"Clipped parcels to prediction mask: {len(parcels_gdf)} parcels remaining.")
+        logging.info(
+            f"Clipped parcels to prediction mask: {len(parcels_gdf)} parcels remaining."
+        )
 
     logging.info("Clipping prediction lines by area filtered parcels...")
     if parcels_gdf.empty:

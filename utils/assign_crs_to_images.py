@@ -127,9 +127,7 @@ def main(args):
         mask_gdf = mask_gdf.to_crs(crs)
         mask_union = mask_gdf.union_all()
         mask_wkt = mask_union.wkt
-        logging.info(
-            f"Loaded prediction mask from {mask_path}, reprojected to {crs}"
-        )
+        logging.info(f"Loaded prediction mask from {mask_path}, reprojected to {crs}")
 
     process_func = partial(
         process_image, output_dir=output_dir, target_crs=crs, mask_wkt=mask_wkt
@@ -158,9 +156,7 @@ def main(args):
                     written += 1
     else:
         logging.info("Using single process.")
-        for file_path in tqdm(
-            image_files, desc="Assigning CRS and converting to TIFF"
-        ):
+        for file_path in tqdm(image_files, desc="Assigning CRS and converting to TIFF"):
             result = process_func(file_path)
             if result is None:
                 errors += 1
