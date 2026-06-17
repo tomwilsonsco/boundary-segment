@@ -141,6 +141,13 @@ def parse_arguments(args=None):
         default=5e5,
         help="Maximum parcel area in CRS units. Parcels larger than this are ignored. Default: 5e5.",
     )
+    parser.add_argument(
+        "--prediction-mask",
+        type=Path,
+        default=None,
+        help="Path to the prediction mask file (.gpkg or .shp). Ground truth parcel lines are "
+        "clipped to the mask before evaluation.",
+    )
 
     return parser.parse_args(args)
 
@@ -161,6 +168,17 @@ def main(args):
 
     logging.info(f"Filtering parcels by area <= {args.max_parcel_area}...")
     parcels_gdf = parcels_gdf[parcels_gdf.geometry.area <= args.max_parcel_area]
+
+    # Clip parcels to prediction mask (if provided)
+    if args.prediction_mask is not None:
+        mask_path = args.prediction_mask.resolve()
+        if not mask_path.exists():
+            raise ValueError(f"Prediction mask not found: {mask_path}")
+        mask_gdf = gpd.read_file(mask_path)
+        mask_gdf = mask_gdf.to_crs(crs)
+        mask_union = mask_gdf.union_all()
+        parcels_gdf = gpd.clip(parcels_gdf, mask_union)
+        logging.info(f"Clipped parcels to prediction mask: {len(parcels_gdf)} parcels remaining.")
 
     logging.info("Clipping prediction lines by area filtered parcels...")
     if parcels_gdf.empty:
