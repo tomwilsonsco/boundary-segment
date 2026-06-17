@@ -11,7 +11,6 @@ import pandas as pd
 import shutil
 import argparse
 import sys
-import json
 
 
 def parse_arguments(args=None):
@@ -53,6 +52,14 @@ def parse_arguments(args=None):
         action="store_true",
         help="If set, delete and recreate the output directory if it already exists. "
         "If not set, the script will exit if the output directory is non-empty.",
+    )
+    parser.add_argument(
+        "--prediction-mask",
+        type=Path,
+        default=None,
+        help="Path to the prediction mask file (.gpkg or .shp). Chips that do not intersect "
+        "the mask are deleted and recorded in chips_ignore.csv with condition "
+        "'outside prediction mask'.",
     )
     return parser.parse_args(args)
 
@@ -111,22 +118,79 @@ def main(args):
         with rio.open(list(out_dir.glob("*.tif"))[0]) as src:
             crs = src.crs
         gdf = gpd.GeoDataFrame(geoms, crs=crs)
-        gdf.to_file(out_dir / "chips_index.gpkg")
 
+        # Read VRT extent and CRS
         with rio.open(vrt_path) as vrt_src:
             vrt_geom = box(*vrt_src.bounds)
+            vrt_crs = vrt_src.crs
+
+        # Load prediction mask if provided
+        mask_geom = None
+        if args.prediction_mask is not None:
+            mask_path = args.prediction_mask.resolve()
+            if not mask_path.exists():
+                raise ValueError(f"Prediction mask not found: {mask_path}")
+            mask_gdf = gpd.read_file(mask_path)
+            if mask_gdf.empty:
+                raise ValueError(f"Prediction mask contains no features: {mask_path}")
+            mask_gdf = mask_gdf.to_crs(vrt_crs)
+            mask_geom = mask_gdf.union_all()
+            if mask_geom is None or mask_geom.is_empty:
+                raise ValueError(f"Prediction mask geometry is empty after union: {mask_path}")
+
+        # Collect all ignore records
+        all_ignore_records = []
 
         # Find polygons not entirely within the VRT extent (small buffer for floating point precision)
         outside_mask = ~gdf.geometry.within(vrt_geom.buffer(0.001))
         outside_chips = gdf[outside_mask]
         if not outside_chips.empty:
-            ignore_df = pd.DataFrame(
+            all_ignore_records.extend(
                 {
-                    "file_name": outside_chips["file_name"],
+                    "file_name": row["file_name"],
                     "remove_condition": "outside image bounds",
                 }
+                for _, row in outside_chips.iterrows()
             )
+
+        # Filter by prediction mask (deleting non-intersecting chips from disk)
+        if mask_geom is not None:
+            # chips that exist on disk but do NOT intersect the mask
+            mask_filter = gdf.geometry.intersects(mask_geom)
+            chips_to_remove = gdf[~mask_filter]
+            for _, row in chips_to_remove.iterrows():
+                chip_path = out_dir / row["file_name"]
+                if chip_path.exists():
+                    chip_path.unlink()
+                all_ignore_records.append(
+                    {
+                        "file_name": row["file_name"],
+                        "remove_condition": "outside prediction mask",
+                    }
+                )
+            # Keep only chips that pass both filters for the index
+            keep_mask = mask_filter & ~outside_mask
+            gdf = gdf[keep_mask].copy()
+        else:
+            gdf = gdf[~outside_mask].copy()
+
+        # Write filtered index
+        if not gdf.empty:
+            gdf.to_file(out_dir / "chips_index.gpkg")
+        else:
+            logging.warning("No chips remain after filtering; skipping index write.")
+
+        # Write chips_ignore.csv (if any records exist)
+        if all_ignore_records:
+            ignore_df = pd.DataFrame(all_ignore_records)
             ignore_df.to_csv(out_dir / "chips_ignore.csv", index=False)
+            logging.info(
+                f"Excluded {len(all_ignore_records)} chips: "
+                f"{sum(1 for r in all_ignore_records if r['remove_condition'] == 'outside image bounds')} outside image bounds, "
+                f"{sum(1 for r in all_ignore_records if r['remove_condition'] == 'outside prediction mask')} outside prediction mask."
+            )
+        else:
+            logging.info("All chips are within the valid extent and mask.")
 
 
 if __name__ == "__main__":

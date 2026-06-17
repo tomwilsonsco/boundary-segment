@@ -623,6 +623,13 @@ def parse_arguments():
         default=0.5,
         help="Extend each predicted line at both ends by this distance in metres. Small extensions help connect lines that stop just short of a junction. Set to 0 to disable. Default: 0.5.",
     )
+    parser.add_argument(
+        "--prediction-mask",
+        type=Path,
+        default=None,
+        help="Path to the prediction mask file (.gpkg or .shp). Output prediction lines are "
+        "clipped to the mask before saving.",
+    )
 
     return parser.parse_args()
 
@@ -729,7 +736,29 @@ def main():
     if args.extend_lines > 0:
         lines = [extend_line(line, args.extend_lines) for line in lines]
 
-    # 7. Save Output
+    # 7. Clip to prediction mask (if provided)
+    if args.prediction_mask is not None:
+        if crs is None:
+            raise ValueError("Prediction output CRS is undefined. Cannot reproject prediction mask.")
+        mask_path = args.prediction_mask.resolve()
+        if not mask_path.exists():
+            raise ValueError(f"Prediction mask not found: {mask_path}")
+        mask_gdf = gpd.read_file(mask_path)
+        if mask_gdf.empty:
+            raise ValueError(f"Prediction mask contains no features: {mask_path}")
+        mask_gdf = mask_gdf.to_crs(crs)
+        mask_union = mask_gdf.union_all()
+        if lines:
+            gdf_lines = gpd.GeoDataFrame(geometry=lines, crs=crs)
+            gdf_lines = gpd.clip(gdf_lines, mask_union)
+            lines = list(gdf_lines.geometry)
+            logging.info(
+                f"Clipped prediction lines to mask: {len(lines)} lines remaining."
+            )
+            if not lines:
+                logging.warning("All lines were outside the prediction mask.")
+
+    # 8. Save Output
     if lines:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_name = args.model.stem
@@ -742,7 +771,7 @@ def main():
     else:
         logging.warning("No lines detected.")
 
-    # 8. Cleanup
+    # 9. Cleanup
     if not args.keep_preds:
         logging.info("Cleaning up temporary files...")
         shutil.rmtree(temp_dir)
