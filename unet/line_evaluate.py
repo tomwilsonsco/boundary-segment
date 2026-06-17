@@ -12,6 +12,8 @@ from shapely.strtree import STRtree
 from tqdm import tqdm
 import logging
 
+from utils.prediction_mask_utils import load_prediction_mask
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
@@ -141,6 +143,13 @@ def parse_arguments(args=None):
         default=5e5,
         help="Maximum parcel area in CRS units. Parcels larger than this are ignored. Default: 5e5.",
     )
+    parser.add_argument(
+        "--prediction-mask",
+        type=Path,
+        default=None,
+        help="Path to the prediction mask file (.gpkg or .shp). Optional. "
+        "Ground truth parcel lines are clipped to the mask before evaluation begins.",
+    )
 
     return parser.parse_args(args)
 
@@ -159,8 +168,21 @@ def main(args):
     if parcels_gdf.crs != crs:
         parcels_gdf = parcels_gdf.to_crs(crs)
 
+    # Fail-early: load prediction mask if provided and validate CRS
+    if args.prediction_mask is not None:
+        mask_union = load_prediction_mask(args.prediction_mask)
+        logging.info("Prediction mask CRS validated (EPSG:27700).")
+
     logging.info(f"Filtering parcels by area <= {args.max_parcel_area}...")
     parcels_gdf = parcels_gdf[parcels_gdf.geometry.area <= args.max_parcel_area]
+
+    # Clip parcels to prediction mask before proceeding (if provided)
+    if args.prediction_mask is not None:
+        logging.info(
+            f"Clipping {len(parcels_gdf)} parcels to prediction mask..."
+        )
+        parcels_gdf = gpd.clip(parcels_gdf, mask_union)
+        logging.info(f"{len(parcels_gdf)} parcels remain after mask clip.")
 
     logging.info("Clipping prediction lines by area filtered parcels...")
     if parcels_gdf.empty:

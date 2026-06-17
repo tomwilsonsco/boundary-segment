@@ -7,15 +7,26 @@ from tqdm import tqdm
 import multiprocessing
 from functools import partial
 import argparse
+import rasterio
+from shapely.geometry import box
+from shapely import wkt
+from utils.prediction_mask_utils import load_prediction_mask
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
 
-def process_image(file_path, output_dir, target_crs):
-    """Worker function to process a single image."""
+def process_image(file_path, output_dir, target_crs, mask_wkt=None):
+    """Worker function to process a single image.
+
+    Args:
+        mask_wkt: WKT string of the prediction mask union geometry, or None.
+                   If provided, the output GeoTIFF bounding box is tested for
+                   intersection with the mask; non-intersecting files are deleted.
+    """
     output_file = output_dir / f"{file_path.stem}.tif"
+    mask_geom = wkt.loads(mask_wkt) if mask_wkt else None
 
     try:
         # Use gdal_translate to convert jpg to tif and set crs
@@ -32,6 +43,17 @@ def process_image(file_path, output_dir, target_crs):
             outputSRS=target_crs,
             creationOptions=creation_options,
         )
+
+        # Post-translate filter: if mask is provided, check intersection
+        if mask_geom is not None and output_file.exists():
+            with rasterio.open(output_file) as src:
+                bbox = box(*src.bounds)
+            if not bbox.intersects(mask_geom):
+                output_file.unlink()
+                logging.debug(
+                    f"{file_path.name} does not intersect prediction mask. Deleted."
+                )
+
     except Exception as e:
         logging.error(f"Error processing {file_path.name}: {e}")
 
@@ -63,6 +85,13 @@ def parse_arguments(args=None):
         action="store_true",
         help="Use single process instead of multiprocessing (slower)",
     )
+    parser.add_argument(
+        "--prediction-mask",
+        type=Path,
+        default=None,
+        help="Path to the prediction mask file (.gpkg or .shp). Optional. "
+        "When provided, only GeoTIFFs whose bounding box intersects the mask are written.",
+    )
     return parser.parse_args(args)
 
 
@@ -84,9 +113,22 @@ def main(args):
     output_dir.mkdir(exist_ok=True)
 
     crs = args.crs
+
+    # Fail-early: load prediction mask if provided and validate CRS
+    mask_wkt = None
+    if args.prediction_mask is not None:
+        mask_geom = load_prediction_mask(args.prediction_mask)
+        mask_wkt = mask_geom.wkt  # serialise for pickling across workers
+        logging.info(
+            f"Prediction mask provided. {len(image_files)} files will be "
+            f"filtered against the mask."
+        )
+
     logging.info(f"Found {len(image_files)} JPG files to process in {img_dir}")
 
-    process_func = partial(process_image, output_dir=output_dir, target_crs=crs)
+    process_func = partial(
+        process_image, output_dir=output_dir, target_crs=crs, mask_wkt=mask_wkt
+    )
 
     if not args.singleprocessor:
         # Use available cores - 1
@@ -106,7 +148,15 @@ def main(args):
         for file_path in tqdm(image_files, desc="Assigning CRS and converting to TIFF"):
             process_func(file_path)
 
-    logging.info("\nProcessing complete.")
+    # Count how many files survived the mask filter
+    if args.prediction_mask is not None:
+        written_files = list(output_dir.glob("*.tif"))
+        logging.info(
+            f"\nProcessing complete. {len(written_files)} GeoTIFFs written "
+            f"(skipped {len(image_files) - len(written_files)} non-intersecting)."
+        )
+    else:
+        logging.info("\nProcessing complete.")
 
 
 if __name__ == "__main__":

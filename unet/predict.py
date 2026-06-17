@@ -30,6 +30,7 @@ from tqdm import tqdm
 import segmentation_models_pytorch as smp
 import albumentations as albu
 from albumentations.pytorch import ToTensorV2
+from utils.prediction_mask_utils import load_prediction_mask
 
 
 @contextmanager
@@ -623,6 +624,13 @@ def parse_arguments():
         default=0.5,
         help="Extend each predicted line at both ends by this distance in metres. Small extensions help connect lines that stop just short of a junction. Set to 0 to disable. Default: 0.5.",
     )
+    parser.add_argument(
+        "--prediction-mask",
+        type=Path,
+        default=None,
+        help="Path to the prediction mask file (.gpkg or .shp). Optional. "
+        "Output prediction lines are clipped to the mask before saving.",
+    )
 
     return parser.parse_args()
 
@@ -637,6 +645,11 @@ def main():
         )
         torch.backends.cuda.matmul.allow_tf32 = True  # Ampere+ free speedup
         torch.backends.cudnn.allow_tf32 = True
+
+    # Fail-early: load prediction mask if provided and validate CRS
+    if args.prediction_mask is not None:
+        load_prediction_mask(args.prediction_mask)
+        logging.info("Prediction mask CRS validated (EPSG:27700).")
 
     # 1. Setup Paths
     if args.model is None:
@@ -728,6 +741,19 @@ def main():
     # 6. Extend lines
     if args.extend_lines > 0:
         lines = [extend_line(line, args.extend_lines) for line in lines]
+
+    # --- Prediction mask clip (Step 7a) ---
+    if args.prediction_mask is not None:
+        mask_union = load_prediction_mask(args.prediction_mask)
+        logging.info(f"Clipping {len(lines)} lines to prediction mask...")
+        gdf_lines = gpd.GeoDataFrame(geometry=lines, crs=crs)
+        clipped_gdf = gpd.clip(gdf_lines, mask_union)
+        lines_remaining = list(clipped_gdf.geometry)
+        logging.info(
+            f"{len(lines_remaining)} lines remain after clipping "
+            f"({len(lines) - len(lines_remaining)} removed)."
+        )
+        lines = lines_remaining
 
     # 7. Save Output
     if lines:

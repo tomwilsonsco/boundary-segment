@@ -12,6 +12,7 @@ import shutil
 import argparse
 import sys
 import json
+from utils.prediction_mask_utils import load_prediction_mask
 
 
 def parse_arguments(args=None):
@@ -54,6 +55,14 @@ def parse_arguments(args=None):
         help="If set, delete and recreate the output directory if it already exists. "
         "If not set, the script will exit if the output directory is non-empty.",
     )
+    parser.add_argument(
+        "--prediction-mask",
+        type=Path,
+        default=None,
+        help="Path to the prediction mask file (.gpkg or .shp). Optional. "
+        "Chips that do not intersect the mask are deleted and recorded "
+        "in chips_ignore.csv with condition 'outside prediction mask'.",
+    )
     return parser.parse_args(args)
 
 
@@ -71,6 +80,12 @@ def main(args):
         raise ValueError(
             f"Offset ({args.chip_offset}) must be smaller than chip size ({args.chip_size})"
         )
+
+    # Fail-early: load prediction mask if provided and validate CRS
+    mask_geom = None
+    if args.prediction_mask is not None:
+        mask_geom = load_prediction_mask(args.prediction_mask)
+        logging.info("Prediction mask loaded and validated.")
 
     out_dir = vrt_path.parent / args.output_subdir
     out_dir.mkdir(exist_ok=True)
@@ -111,22 +126,63 @@ def main(args):
         with rio.open(list(out_dir.glob("*.tif"))[0]) as src:
             crs = src.crs
         gdf = gpd.GeoDataFrame(geoms, crs=crs)
-        gdf.to_file(out_dir / "chips_index.gpkg")
 
         with rio.open(vrt_path) as vrt_src:
             vrt_geom = box(*vrt_src.bounds)
 
-        # Find polygons not entirely within the VRT extent (small buffer for floating point precision)
+        # --- Collect excluded chips ---
+        exclude_rows = []
+
+        # 1. VRT extent filter
         outside_mask = ~gdf.geometry.within(vrt_geom.buffer(0.001))
         outside_chips = gdf[outside_mask]
         if not outside_chips.empty:
-            ignore_df = pd.DataFrame(
-                {
-                    "file_name": outside_chips["file_name"],
-                    "remove_condition": "outside image bounds",
-                }
-            )
-            ignore_df.to_csv(out_dir / "chips_ignore.csv", index=False)
+            for _, row in outside_chips.iterrows():
+                exclude_rows.append(
+                    {"file_name": row["file_name"], "remove_condition": "outside image bounds"}
+                )
+
+        # 2. Prediction mask filter (applied after VRT filter)
+        if mask_geom is not None:
+            # Test each chip geometry against the mask
+            mask_filter = gdf.geometry.intersects(mask_geom)
+            outside_mask_chips = gdf[~mask_filter]
+            if not outside_mask_chips.empty:
+                for _, row in outside_mask_chips.iterrows():
+                    chip_path = out_dir / row["file_name"]
+                    if chip_path.exists():
+                        chip_path.unlink()
+                        logging.debug(
+                            f"Deleted {row['file_name']} (outside prediction mask)"
+                        )
+                    exclude_rows.append(
+                        {
+                            "file_name": row["file_name"],
+                            "remove_condition": "outside prediction mask",
+                        }
+                    )
+
+        # --- Write chips_ignore.csv (append mode preserves existing rows) ---
+        if exclude_rows:
+            ignore_df = pd.DataFrame(exclude_rows)
+            csv_path = out_dir / "chips_ignore.csv"
+            # If file already exists (e.g., from prior runs), append without header
+            if csv_path.exists():
+                ignore_df.to_csv(csv_path, mode="a", header=False, index=False)
+            else:
+                ignore_df.to_csv(csv_path, index=False)
+
+        # --- Write chips_index.gpkg with only chips that passed ALL filters ---
+        all_filters_pass = gdf.geometry.within(vrt_geom.buffer(0.001))
+        if mask_geom is not None:
+            all_filters_pass = all_filters_pass & gdf.geometry.intersects(mask_geom)
+        filtered_gdf = gdf[all_filters_pass]
+        if not filtered_gdf.empty:
+            filtered_gdf.to_file(out_dir / "chips_index.gpkg")
+        else:
+            logging.warning("No chips remain after filtering.")
+            # Write empty index to avoid downstream errors
+            filtered_gdf.to_file(out_dir / "chips_index.gpkg")
 
 
 if __name__ == "__main__":
