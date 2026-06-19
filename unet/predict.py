@@ -640,9 +640,9 @@ def main():
 
     if device == "cuda":
         torch.backends.cudnn.benchmark = (
-            True  # optimal conv kernels for fixed chip size
+            True
         )
-        torch.backends.cuda.matmul.allow_tf32 = True  # Ampere+ free speedup
+        torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
     # 1. Setup Paths
