@@ -1,0 +1,49 @@
+pipeline_settings:
+  preserve_intermediate_files: false # if false, deletes all files except final predictions
+
+data:
+  # the area name, to dynamically generate intermediate paths
+  area_name: "gretna"
+  
+  # base directory where all inputs are stored
+  base_input_dir: "inputs"
+  
+  # path to the directory containing the APGB JPEG files
+  raw_image_dir: "images/gretna/12.5cm Aerial Photo"
+  
+  # existing land parcels geometry
+  parcels_gpkg: "gretna_parcels.gpkg"
+  
+  # optional prediction mask geometry
+  prediction_mask_gpkg: "gretna_prediction_mask.gpkg"
+
+models:
+  # the pre-trained base model to use for initial predictions and fine-tuning
+  base_model: "boundary_lines_base_202606019.pth"
+  # Name/Description to append to the locally fine-tuned model
+  fine_tuned_desc: "gretna_local"
+
+parameters:
+  assign_crs:
+    crs: "EPSG:27700" # epsg for British National Grid
+    
+  chip_image:
+    chip_size: 512
+    chip_offset: 384
+    resampling_factor: 0.5
+    
+  line_evaluate:
+    buffer_dist: 2.0 # metres; maps to --buffer-dist in line_evaluate.py
+    
+  filter_chips:
+    min_training_length: 30
+    recall_min: 0.5
+    min_precision: 0.5
+    
+  train:
+    arch: "unetplusplus"
+    encoder: "efficientnet-b3"
+    loss_method: "bce_dice"
+    epochs: 30
+    batch_size: 8
+    lr: 0.0001
