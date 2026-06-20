@@ -140,7 +140,7 @@ def main():
 
     # ==========================================
     # Stage 2: Preliminary Dataset Split
-    #
+    
     # chip_metrics.py (Step 9) requires background_only_check.csv, which is
     # produced by split_dataset_train_test.py / rschip.DatasetSplitter.  Run
     # an initial split now so that file exists.
@@ -164,6 +164,7 @@ def main():
         "python", "unet/predict.py",
         "--chip-dir", chips_dir,
         "--model", base_model_path,
+        "--num-workers", 8,
     ]
     if prediction_mask:
         cmd_step7_init.extend(["--prediction-mask", prediction_mask])
@@ -236,6 +237,10 @@ def main():
 
     # ==========================================
     # Stage 4: Fine Prediction
+
+    # Remove the preliminary dataset split so the final split can recreate it
+    if dataset_dir.exists():
+        shutil.rmtree(dataset_dir)
 
     # Step 5 (Final): Re-run dataset split now that chips_ignore.csv has been
     # updated by Step 10 — this produces the clean training dataset.
