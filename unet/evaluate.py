@@ -14,6 +14,7 @@ import multiprocessing
 from datetime import datetime
 import argparse
 from pathlib import Path
+import random
 import logging
 
 logging.basicConfig(
@@ -287,6 +288,23 @@ def parse_arguments(args=None):
         default=4,
         help="DataLoader worker processes for prefetching chips. Default: 4.",
     )
+    parser.add_argument(
+        "--sample-percent",
+        type=int,
+        default=100,
+        choices=range(1, 101),
+        metavar="[1-100]",
+        help="Percentage of the test set to evaluate on. Values below 100 randomly sample "
+        "that proportion of files without replacement for a quicker, approximate evaluation "
+        "on large test sets. Default: 100.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed used when sampling the test set (only applies when "
+        "--sample-percent < 100). Default: 42.",
+    )
 
     return parser.parse_args(args)
 
@@ -353,6 +371,16 @@ def main(args):
     )
 
     logging.info(f"Found {len(test_dataset)} test images.")
+
+    # optionally sample a percentage of the test set
+    if args.sample_percent < 100:
+        random.seed(args.seed)
+        k = max(1, int(len(test_dataset.image_names) * args.sample_percent / 100))
+        test_dataset.image_names = random.sample(test_dataset.image_names, k)
+        logging.info(
+            f"Using {args.sample_percent}% sample: {len(test_dataset.image_names)} images "
+            f"(seed={args.seed})."
+        )
 
     iou_scores = []
     dice_scores = []
