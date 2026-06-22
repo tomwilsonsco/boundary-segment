@@ -260,3 +260,6 @@ The `pipeline_config.yaml` file contains all configurable settings:
 | `pipeline_settings` | Whether to preserve intermediate files after completion |
 
 Edit `pipeline_config.yaml` for your area before running.
+
+# Example prediciton
+![Example plot](plots/apgb_imgs_8832_40320_analysis.png)
