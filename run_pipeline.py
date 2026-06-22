@@ -90,8 +90,7 @@ def main():
     chips_index_gpkg = chips_dir / "chips_index.gpkg"
     chips_metrics_gpkg = chips_dir / "chips_index_metrics.gpkg"
 
-    base_model_name = config["models"]["base_model"]
-    base_model_path = Path("models") / base_model_name
+    base_model_path = Path(config["models"]["base_model"])
     predictions_dir = Path("outputs/predictions")
 
     logger.info(f"Starting pipeline for area: {area_name}")
