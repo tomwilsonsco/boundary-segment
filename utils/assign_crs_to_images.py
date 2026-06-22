@@ -51,7 +51,10 @@ def process_image(file_path, output_dir, target_crs, mask_wkt=None):
     # If prediction mask is provided, check intersection
     if mask_wkt is not None:
         # Cache parsed geometry per worker process (avoids re-parsing WKT for every image)
-        if not hasattr(process_image, "_mask_geom") or getattr(process_image, "_mask_wkt", None) != mask_wkt:
+        if (
+            not hasattr(process_image, "_mask_geom")
+            or getattr(process_image, "_mask_wkt", None) != mask_wkt
+        ):
             process_image._mask_wkt = mask_wkt
             process_image._mask_geom = wkt.loads(mask_wkt)
         mask_geom = process_image._mask_geom

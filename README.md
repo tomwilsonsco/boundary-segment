@@ -241,13 +241,25 @@ The following scripts are part of the repository but are not part of the main pi
 | `unet/calculate_mask_proportion.py` | Samples a percentage of mask chips and reports the mean proportion of boundary pixels. Use the result to determine a sensible `--pos-weight` for `train.py`. |
 | `unet/delete_dataset_chips.py` | Deletes chips listed in `chips_ignore.csv` from an existing dataset directory. An alternative to re-running `split_dataset_train_test.py` after filtering. |
 
-# Running full process
-A shell script is included that runs each stage described above for testing. This could be edited for production runs too. In a terminal after `cd` to the repository run:
+# Running full pipeline
+A Python wrapper script, `run_pipeline.py`, runs the entire pipeline described above: Steps 1–10 including the iterative predict - local training filter - retrain. Configuration is read from a YAML file so you can adjust parameters without editing the script.
+
+In a terminal after `cd` to the repository run:
 
 ```bash
-bash run_test_pipeline.sh
+python run_pipeline.py --config pipeline_config.yaml
 ```
-An equivalent CMD is available for Windows users. On Windows you may need to enable your Conda env first see [instructions for windows users](#instructions-for-windows-users-non-docker) and then run:
 
-```powershell
-run_test_pipeline.cmd
+The `pipeline_config.yaml` file contains all configurable settings:
+
+| Section | Key parameters |
+|---------|----------------|
+| `data` | Area name, paths to raw images, parcels GPKG, and optional prediction mask |
+| `models` | Path to the pre-trained base model and description tag for fine-tuning |
+| `parameters` | CRS, chip size/offset/resampling, buffer distance, filter thresholds, training hyperparameters |
+| `pipeline_settings` | Whether to preserve intermediate files after completion |
+
+Edit `pipeline_config.yaml` for your area before running.
+
+# Example prediciton
+![Example plot](plots/apgb_imgs_8832_40320_analysis.png)
