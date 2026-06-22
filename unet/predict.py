@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import sys
 import shutil
 from pathlib import Path
 from contextlib import contextmanager
@@ -658,7 +659,7 @@ def main():
 
     if not args.model or not args.model.exists():
         logging.error(f"Error: Model not found: {args.model}")
-        return
+        sys.exit(1)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     temp_dir = args.output_dir / "temp_preds"
@@ -715,12 +716,12 @@ def main():
 
     if not pred_files:
         logging.warning("No predictions generated. Exiting.")
-        return
+        sys.exit(1)
 
     # 4. Stitch (VRT)
     vrt_path = args.output_dir / "mosaic.vrt"
     if not build_vrt(vrt_path, pred_files):
-        return
+        sys.exit(1)
 
     # 5. Process VRT -> Skeleton -> Lines
     lines, crs = process_vrt_to_lines(
