@@ -44,7 +44,7 @@ conda activate geo_env
 python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
 # install other packages, e.g. rschip not on conda-forge
-python -m pip install rschip segmentation-models-pytorch albumentations opencv-python-headless pytest black flake8 tqdm scikit-learn scikit-image matplotlib
+python -m pip install rschip segmentation-models-pytorch albumentations opencv-python-headless pytest black flake8 tqdm scikit-learn scikit-image matplotlib pandas scipy ipykernel pyyaml
 ```
 
 # Training a segmentation model

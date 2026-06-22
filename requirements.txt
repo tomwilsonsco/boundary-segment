@@ -17,4 +17,4 @@ rschip
 segmentation-models-pytorch
 albumentations
 scikit-image
-yaml
+pyyaml
