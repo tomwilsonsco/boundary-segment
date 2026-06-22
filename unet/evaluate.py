@@ -295,7 +295,7 @@ def parse_arguments(args=None):
         choices=range(1, 101),
         metavar="[1-100]",
         help="Percentage of the test set to evaluate on. Values below 100 randomly sample "
-        "that proportion of files without replacement for a quicker, approximate evaluation "
+        "that proportion of files for a quicker, approximate evaluation "
         "on large test sets. Default: 100.",
     )
     parser.add_argument(
