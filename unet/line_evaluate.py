@@ -172,7 +172,9 @@ def main(args):
     # Clip parcels to prediction mask (if provided)
     if args.prediction_mask is not None:
         if crs is None:
-            raise ValueError("Prediction CRS is undefined. Cannot reproject prediction mask.")
+            raise ValueError(
+                "Prediction CRS is undefined. Cannot reproject prediction mask."
+            )
         mask_path = args.prediction_mask.resolve()
         if not mask_path.exists():
             raise ValueError(f"Prediction mask not found: {mask_path}")

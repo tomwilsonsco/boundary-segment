@@ -639,9 +639,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if device == "cuda":
-        torch.backends.cudnn.benchmark = (
-            True
-        )
+        torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
@@ -739,7 +737,9 @@ def main():
     # 7. Clip to prediction mask (if provided)
     if args.prediction_mask is not None:
         if crs is None:
-            raise ValueError("Prediction output CRS is undefined. Cannot reproject prediction mask.")
+            raise ValueError(
+                "Prediction output CRS is undefined. Cannot reproject prediction mask."
+            )
         mask_path = args.prediction_mask.resolve()
         if not mask_path.exists():
             raise ValueError(f"Prediction mask not found: {mask_path}")

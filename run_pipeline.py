@@ -99,7 +99,6 @@ def main():
     # ==========================================
     # Stage 1: Data Preparation (Steps 1–4)
 
-
     # Step 1: Assign CRS and convert JPEGs to GeoTIFFs
     assign_crs_params = config["parameters"].get("assign_crs", {})
     cmd_step1 = ["python", "utils/assign_crs_to_images.py", "--img-dir", raw_img_dir]
@@ -118,11 +117,16 @@ def main():
     # manual cleanup; without it chip_image.py exits immediately if chips/ exists.
     p_chip = config["parameters"]["chip_image"]
     cmd_step3 = [
-        "python", "utils/chip_image.py",
-        "--vrt", vrt_path,
-        "--chip-size", p_chip["chip_size"],
-        "--chip-offset", p_chip["chip_offset"],
-        "--resampling-factor", p_chip["resampling_factor"],
+        "python",
+        "utils/chip_image.py",
+        "--vrt",
+        vrt_path,
+        "--chip-size",
+        p_chip["chip_size"],
+        "--chip-offset",
+        p_chip["chip_offset"],
+        "--resampling-factor",
+        p_chip["resampling_factor"],
         "--overwrite-output-dir",
     ]
     if prediction_mask:
@@ -131,27 +135,33 @@ def main():
 
     # Step 4: Create binary mask TIFFs from land parcel polygons
     cmd_step4 = [
-        "python", "unet/create_masks.py",
-        "--chip-dir", chips_dir,
-        "--parcels", parcels_gpkg,
+        "python",
+        "unet/create_masks.py",
+        "--chip-dir",
+        chips_dir,
+        "--parcels",
+        parcels_gpkg,
     ]
     run_command(cmd_step4, "Step 4: Create Masks")
 
     # ==========================================
     # Stage 2: Preliminary Dataset Split
-    
+
     # chip_metrics.py (Step 9) requires background_only_check.csv, which is
     # produced by split_dataset_train_test.py / rschip.DatasetSplitter.  Run
     # an initial split now so that file exists.
     # The split is re-run after Step 10
     # with the updated chips_ignore.csv to produce the clean training dataset.
 
-
     cmd_step5_prelim = [
-        "python", "unet/split_dataset_train_test.py",
-        "--chip-dir", chips_dir,
-        "--mask-dir", masks_dir,
-        "--output-dir", dataset_output_dir,
+        "python",
+        "unet/split_dataset_train_test.py",
+        "--chip-dir",
+        chips_dir,
+        "--mask-dir",
+        masks_dir,
+        "--output-dir",
+        dataset_output_dir,
     ]
     run_command(cmd_step5_prelim, "Step 5 (Preliminary): Initial Dataset Split")
 
@@ -160,10 +170,14 @@ def main():
 
     # Step 7 (Initial): Predict with the pre-trained base model.
     cmd_step7_init = [
-        "python", "unet/predict.py",
-        "--chip-dir", chips_dir,
-        "--model", base_model_path,
-        "--num-workers", 8,
+        "python",
+        "unet/predict.py",
+        "--chip-dir",
+        chips_dir,
+        "--model",
+        base_model_path,
+        "--num-workers",
+        8,
     ]
     if prediction_mask:
         cmd_step7_init.extend(["--prediction-mask", prediction_mask])
@@ -174,9 +188,7 @@ def main():
     )
 
     # Locate the prediction GPKG just written by predict.py (newest by time)
-    pred_files = sorted(
-        predictions_dir.glob("*.gpkg"), key=lambda f: f.stat().st_ctime
-    )
+    pred_files = sorted(predictions_dir.glob("*.gpkg"), key=lambda f: f.stat().st_ctime)
     if not pred_files:
         logger.error(f"No prediction GPKG found in {predictions_dir}")
         sys.exit(1)
@@ -186,10 +198,14 @@ def main():
     # Step 8: Line Evaluate — produces <pred_stem>_result_compare.gpkg
     p_line_eval = config["parameters"].get("line_evaluate", {})
     cmd_step8 = [
-        "python", "unet/line_evaluate.py",
-        "--pred-gpkg", latest_pred_gpkg,
-        "--parcels", parcels_gpkg,
-        "--chip-dir", chips_dir,
+        "python",
+        "unet/line_evaluate.py",
+        "--pred-gpkg",
+        latest_pred_gpkg,
+        "--parcels",
+        parcels_gpkg,
+        "--chip-dir",
+        chips_dir,
     ]
     if "buffer_dist" in p_line_eval:
         cmd_step8.extend(["--buffer-dist", p_line_eval["buffer_dist"]])
@@ -203,34 +219,44 @@ def main():
         latest_pred_gpkg.parent / f"{latest_pred_gpkg.stem}_result_compare.gpkg"
     )
     if not eval_lines_gpkg.exists():
-        logger.error(
-            f"Expected line evaluate output not found: {eval_lines_gpkg}"
-        )
+        logger.error(f"Expected line evaluate output not found: {eval_lines_gpkg}")
         sys.exit(1)
 
     # Step 9: Chip Metrics
     # --line-comparison: the TP/FP/FN comparison GPKG from line_evaluate
-    # --mask-dir: directory containing background_only_check.csv 
+    # --mask-dir: directory containing background_only_check.csv
     # --output-gpkg: explicit path so Step 10 can locate it reliably
     cmd_step9 = [
-        "python", "unet/chip_metrics.py",
-        "--line-comparison", eval_lines_gpkg,
-        "--chips-index", chips_index_gpkg,
-        "--mask-dir", masks_dir,
-        "--output-gpkg", chips_metrics_gpkg,
-        "--dataset-dir", dataset_dir,
+        "python",
+        "unet/chip_metrics.py",
+        "--line-comparison",
+        eval_lines_gpkg,
+        "--chips-index",
+        chips_index_gpkg,
+        "--mask-dir",
+        masks_dir,
+        "--output-gpkg",
+        chips_metrics_gpkg,
+        "--dataset-dir",
+        dataset_dir,
     ]
     run_command(cmd_step9, "Step 9: Calculate Chip Metrics")
 
     # Step 10: Filter Training Chips — updates chips_ignore.csv
     p_filter = config["parameters"]["filter_chips"]
     cmd_step10 = [
-        "python", "unet/filter_training_chips.py",
-        "--input-gpkg", chips_metrics_gpkg,
-        "--chip-dir", chips_dir,
-        "--min-training-length", p_filter["min_training_length"],
-        "--recall-min", p_filter["recall_min"],
-        "--min-precision", p_filter["min_precision"],
+        "python",
+        "unet/filter_training_chips.py",
+        "--input-gpkg",
+        chips_metrics_gpkg,
+        "--chip-dir",
+        chips_dir,
+        "--min-training-length",
+        p_filter["min_training_length"],
+        "--recall-min",
+        p_filter["recall_min"],
+        "--min-precision",
+        p_filter["min_precision"],
     ]
     run_command(cmd_step10, "Step 10: Filter Training Chips")
 
@@ -244,10 +270,14 @@ def main():
     # Step 5 (Final): Re-run dataset split now that chips_ignore.csv has been
     # updated by Step 10 — this produces the clean training dataset.
     cmd_step5_final = [
-        "python", "unet/split_dataset_train_test.py",
-        "--chip-dir", chips_dir,
-        "--mask-dir", masks_dir,
-        "--output-dir", dataset_output_dir,
+        "python",
+        "unet/split_dataset_train_test.py",
+        "--chip-dir",
+        chips_dir,
+        "--mask-dir",
+        masks_dir,
+        "--output-dir",
+        dataset_output_dir,
     ]
     run_command(cmd_step5_final, "Step 5 (Final): Create Cleaned Split Dataset")
 
@@ -256,16 +286,26 @@ def main():
     # the fine-tuning described in the README.
     p_train = config["parameters"]["train"]
     cmd_step6 = [
-        "python", "unet/train.py",
-        "--dataset-dir", dataset_dir,
-        "--arch", p_train["arch"],
-        "--encoder", p_train["encoder"],
-        "--loss-method", p_train["loss_method"],
-        "--epochs", p_train["epochs"],
-        "--batch-size", p_train["batch_size"],
-        "--lr", p_train["lr"],
-        "--desc", config["models"]["fine_tuned_desc"],
-        "--resume", base_model_path,
+        "python",
+        "unet/train.py",
+        "--dataset-dir",
+        dataset_dir,
+        "--arch",
+        p_train["arch"],
+        "--encoder",
+        p_train["encoder"],
+        "--loss-method",
+        p_train["loss_method"],
+        "--epochs",
+        p_train["epochs"],
+        "--batch-size",
+        p_train["batch_size"],
+        "--lr",
+        p_train["lr"],
+        "--desc",
+        config["models"]["fine_tuned_desc"],
+        "--resume",
+        base_model_path,
     ]
     run_command(cmd_step6, "Step 6: Train Fine-Tuned Model")
 
@@ -285,9 +325,12 @@ def main():
 
     # Step 7 (Final): Predict with the fine-tuned model.
     cmd_step7_final = [
-        "python", "unet/predict.py",
-        "--chip-dir", chips_dir,
-        "--model", fine_tuned_model_path,
+        "python",
+        "unet/predict.py",
+        "--chip-dir",
+        chips_dir,
+        "--model",
+        fine_tuned_model_path,
     ]
     if prediction_mask:
         cmd_step7_final.extend(["--prediction-mask", prediction_mask])
@@ -306,8 +349,8 @@ def main():
         # Remove the GeoTIFFs, VRT, chips, and masks tree, plus the dataset split.
         # The original JPEG source files under raw_img_dir are intentionally kept.
         paths_to_remove = [
-            tiff_crs_dir,       # contains tiffs, VRT, chips/, and masks/
-            dataset_dir,        # contains the train/val/test split
+            tiff_crs_dir,  # contains tiffs, VRT, chips/, and masks/
+            dataset_dir,  # contains the train/val/test split
         ]
 
         for p in paths_to_remove:
