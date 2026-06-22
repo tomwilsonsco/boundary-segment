@@ -3,25 +3,25 @@ pipeline_settings:
 
 data:
   # the area name, to dynamically generate intermediate paths
-  area_name: "gretna"
+  area_name: "spey"
   
   # base directory where all inputs are stored
   base_input_dir: "inputs"
   
   # path to the directory containing the APGB JPEG files
-  raw_image_dir: "images/gretna/12.5cm Aerial Photo"
+  raw_image_dir: "images/spey"
   
   # existing land parcels geometry
-  parcels_gpkg: "gretna_parcels.gpkg"
+  parcels_gpkg: "spey_parcels.gpkg"
   
   # optional prediction mask geometry
-  prediction_mask_gpkg: "gretna_prediction_mask.gpkg"
+  prediction_mask_gpkg: "spey_prediction_mask.gpkg"
 
 models:
   # the pre-trained base model to use for initial predictions and fine-tuning
-  base_model: "boundary_lines_base_202606019.pth"
+  base_model: "models/20260621_200226_boundary_base_unetplusplus.pth"
   # Name/Description to append to the locally fine-tuned model
-  fine_tuned_desc: "gretna_local"
+  fine_tuned_desc: "fine_tuned"
 
 parameters:
   assign_crs:
@@ -33,7 +33,7 @@ parameters:
     resampling_factor: 0.5
     
   line_evaluate:
-    buffer_dist: 2.0 # metres; maps to --buffer-dist in line_evaluate.py
+    buffer_dist: 3.0 # metres; maps to --buffer-dist in line_evaluate.py
     
   filter_chips:
     min_training_length: 30
@@ -44,6 +44,6 @@ parameters:
     arch: "unetplusplus"
     encoder: "efficientnet-b3"
     loss_method: "bce_dice"
-    epochs: 30
+    epochs: 10
     batch_size: 8
-    lr: 0.0001
+    lr: 0.00001 # 10% of LR default in train.py as fine tune
