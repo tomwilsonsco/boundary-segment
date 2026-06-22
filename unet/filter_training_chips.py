@@ -64,7 +64,7 @@ def parse_arguments(args=None):
         "--min-precision",
         type=float,
         default=0.5,
-        help="Minimum precision threshold. If precision is below this (and FP length >= 20m), it is recorded as 'extra_boundary'. Default: 0.2",
+        help="Minimum precision threshold. If precision is below this (and FP length >= 20m), it is recorded as 'extra_boundary'. Default: 0.5",
     )
     return parser.parse_args(args)
 
