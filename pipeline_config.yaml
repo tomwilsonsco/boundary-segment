@@ -44,6 +44,6 @@ parameters:
     arch: "unetplusplus"
     encoder: "efficientnet-b3"
     loss_method: "bce_dice"
-    epochs: 30 # might need fewer keep check validation loss vs training loss
+    epochs: 10 # might need more - keep check validation loss vs training loss
     batch_size: 8
     lr: 0.00001 # 10% of LR default in train.py as fine tune
