@@ -5,6 +5,8 @@ Predict land parcel boundaries using high resolution aerial photography and segm
 # Setup
 This process uses open source geospatial packages and PyTorch. Use of a GPU is recommended for training the models and making predictions. 
 
+**Note:** Full details on setup and the code is outlined below. A Word document was created with internal guidance. Please review that for a quicker start.
+
 ## Using Docker
 You can optionally use the Docker setup used during development of this process. This is found under `/.devcontainer`. 
 
