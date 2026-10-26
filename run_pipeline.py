@@ -6,12 +6,13 @@ Reads configuration from a YAML file and executes the underlying tools.
 """
 
 import argparse
-import subprocess
-import yaml
-import sys
-import shutil
 import logging
+import shutil
+import subprocess
+import sys
 from pathlib import Path
+
+import yaml
 
 # Configure basic logging
 logging.basicConfig(

@@ -2,13 +2,14 @@
 
 import argparse
 import logging
-from pathlib import Path
-import tempfile
 import multiprocessing
+import tempfile
 from functools import partial
+from pathlib import Path
+
 import geopandas as gpd
-from tqdm import tqdm
 from rschip import SegmentationMask
+from tqdm import tqdm
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"

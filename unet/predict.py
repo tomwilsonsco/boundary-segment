@@ -2,35 +2,35 @@
 
 import argparse
 import logging
+import multiprocessing
 import os
-import sys
+import queue
 import shutil
-from pathlib import Path
+import sys
+import threading
 from contextlib import contextmanager
 from datetime import datetime
-import threading
-import queue
-import multiprocessing
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-import torch
+import albumentations as albu
 import cv2
+import geopandas as gpd
 import numpy as np
 import rasterio
-from scipy.ndimage import convolve
-from rasterio.windows import Window
-from rasterio.transform import Affine
+import segmentation_models_pytorch as smp
+import torch
+from albumentations.pytorch import ToTensorV2
 from osgeo import gdal
-import geopandas as gpd
+from rasterio.transform import Affine
+from rasterio.windows import Window
+from scipy.ndimage import convolve
 from shapely.geometry import LineString
 from skimage.morphology import skeletonize
 from tqdm import tqdm
-import segmentation_models_pytorch as smp
-import albumentations as albu
-from albumentations.pytorch import ToTensorV2
 
 
 @contextmanager

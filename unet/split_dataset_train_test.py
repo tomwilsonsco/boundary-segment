@@ -1,11 +1,12 @@
 """Split chip images and masks into train, validation, and test dataset directories."""
 
 import argparse
+import logging
 from pathlib import Path
-from rschip import DatasetSplitter
+
 import numpy as np
 import pandas as pd
-import logging
+from rschip import DatasetSplitter
 
 # set up basic logging
 logging.basicConfig(

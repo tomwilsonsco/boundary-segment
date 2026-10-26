@@ -1,22 +1,23 @@
 """Train a segmentation model (U-Net / UNet++ / DeepLabV3+ / FPN) on chip images and binary boundary masks."""
 
+import argparse
 import logging
 import os
 import random
-import torch
-import numpy as np
-from torch.utils.data import DataLoader, Dataset
-import cv2
-import segmentation_models_pytorch as smp
-import albumentations as albu
-from albumentations.pytorch import ToTensorV2
-from tqdm import tqdm
-import matplotlib.pyplot as plt
-from datetime import datetime
-from torch.amp import autocast, GradScaler
 from contextlib import contextmanager
-import argparse
+from datetime import datetime
 from pathlib import Path
+
+import albumentations as albu
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+import segmentation_models_pytorch as smp
+import torch
+from albumentations.pytorch import ToTensorV2
+from torch.amp import GradScaler, autocast
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"

@@ -1,16 +1,17 @@
 """Assign a CRS to JPEG images and convert them to GeoTIFF format."""
 
+import argparse
 import logging
-from pathlib import Path
-from osgeo import gdal
-from tqdm import tqdm
 import multiprocessing
 from functools import partial
-import argparse
+from pathlib import Path
+
 import geopandas as gpd
 import rasterio
-from shapely.geometry import box
+from osgeo import gdal
 from shapely import wkt
+from shapely.geometry import box
+from tqdm import tqdm
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"

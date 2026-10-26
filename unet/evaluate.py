@@ -1,21 +1,22 @@
 """Evaluate a trained segmentation model on the held-out test set, reporting IoU and Dice scores."""
 
+import argparse
+import logging
+import multiprocessing
 import os
+import random
 from contextlib import contextmanager
-import torch
+from datetime import datetime
+from pathlib import Path
+
+import albumentations as albu
 import cv2
 import numpy as np
 import segmentation_models_pytorch as smp
-import albumentations as albu
+import torch
 from albumentations.pytorch import ToTensorV2
-from tqdm import tqdm
 from torch.utils.data import DataLoader, Dataset
-import multiprocessing
-from datetime import datetime
-import argparse
-from pathlib import Path
-import random
-import logging
+from tqdm import tqdm
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"

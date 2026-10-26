@@ -1,9 +1,10 @@
 """Build a GDAL VRT mosaic from a directory of GeoTIFF or JPEG image files."""
 
+import argparse
 import logging
 from pathlib import Path
+
 from osgeo import gdal
-import argparse
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"

@@ -1,16 +1,16 @@
 """Compare predicted boundary line geometries against ground truth parcel lines, labelling TP, FP, and FN segments."""
 
 import argparse
+import logging
 from datetime import datetime
 from pathlib import Path
+
 import geopandas as gpd
-import pandas as pd
 import rasterio as rio
 from shapely.geometry import GeometryCollection, box
-from shapely.ops import unary_union, substring, linemerge
+from shapely.ops import linemerge, unary_union
 from shapely.strtree import STRtree
 from tqdm import tqdm
-import logging
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"

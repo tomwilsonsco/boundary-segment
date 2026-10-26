@@ -1,16 +1,17 @@
 """Chip a VRT mosaic into fixed-size GeoTIFF tiles with optional resampling."""
 
+import argparse
 import logging
-from rschip import ImageChip
+import shutil
+import sys
 from pathlib import Path
-from tqdm import tqdm
-import rasterio as rio
-from shapely.geometry import box
+
 import geopandas as gpd
 import pandas as pd
-import shutil
-import argparse
-import sys
+import rasterio as rio
+from rschip import ImageChip
+from shapely.geometry import box
+from tqdm import tqdm
 
 
 def parse_arguments(args=None):
