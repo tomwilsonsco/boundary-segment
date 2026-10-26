@@ -12,10 +12,6 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
 import albumentations as albu
 import cv2
 import geopandas as gpd
@@ -31,6 +27,10 @@ from scipy.ndimage import convolve
 from shapely.geometry import LineString
 from skimage.morphology import skeletonize
 from tqdm import tqdm
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 @contextmanager
@@ -474,11 +474,6 @@ def process_vrt_to_lines(
         crs = src.crs
 
         logging.info(f"Mosaic dimensions: {width} x {height} pixels")
-
-        # calculate number of chunks
-        n_chunks_x = int(np.ceil(width / chunk_size))
-        n_chunks_y = int(np.ceil(height / chunk_size))
-        total_chunks = n_chunks_x * n_chunks_y
 
         # Prepare arguments for parallel processing
         chunk_args = []

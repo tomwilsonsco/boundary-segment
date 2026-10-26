@@ -66,7 +66,7 @@ def main(args):
             str(output_vrt), [str(f) for f in image_files], options=options
         )
         # Release the dataset so that the VRT is closed
-        ds = None
+        del ds
         logging.info("VRT file created successfully!")
 
     except Exception as e:
