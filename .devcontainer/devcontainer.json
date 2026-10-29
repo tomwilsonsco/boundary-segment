@@ -17,11 +17,22 @@
             ]
         }
     },
+    "features": {
+        "ghcr.io/devcontainers/features/git:1": {},
+        "ghcr.io/devcontainers/features/node:2": {
+            "version": "lts"
+        },
+        "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+    },
     "remoteUser": "root",
     "forwardPorts": [8050],
     "workspaceFolder": "/app",
+    "containerEnv": {
+        "CLAUDE_CONFIG_DIR": "/root/.claude"
+    },
     "mounts": [
-        "source=${localWorkspaceFolder}/,target=/app,type=bind,consistency=cached"
+        "source=${localWorkspaceFolder}/,target=/app,type=bind,consistency=cached",
+        "source=claude-code-config,target=/root/.claude,type=volume"
     ],
     "shutdownAction": "stopContainer",
     "hostRequirements": {
