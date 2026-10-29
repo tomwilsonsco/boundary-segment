@@ -25,7 +25,6 @@ from albumentations.pytorch import ToTensorV2
 from osgeo import gdal
 from rasterio.transform import Affine
 from rasterio.windows import Window
-from scipy.ndimage import convolve
 from shapely.geometry import LineString, MultiLineString
 from skimage.morphology import skeletonize
 from tqdm import tqdm
@@ -152,6 +151,17 @@ class ChipInferenceDataset(torch.utils.data.Dataset):
     def __init__(self, chip_files, transform):
         self.chip_files = chip_files
         self.transform = transform
+        # size of the placeholder returned for unreadable chips, which must match
+        # the other chips so the batch can still be stacked
+        self.placeholder_shape = (128, 128)
+        with suppress_stderr():
+            for chip_path in chip_files:
+                try:
+                    with rasterio.open(chip_path) as src:
+                        self.placeholder_shape = (src.height, src.width)
+                    break
+                except Exception:
+                    continue
 
     def __len__(self):
         return len(self.chip_files)
@@ -176,7 +186,7 @@ class ChipInferenceDataset(torch.utils.data.Dataset):
                 image = None
 
         if image is None:
-            h, w = 128, 128
+            h, w = self.placeholder_shape
             return torch.zeros(3, h, w), str(chip_path), trans_tuple, crs_str, False
 
         augmented = self.transform(image=image)
@@ -193,22 +203,13 @@ def _read_chip_header(chip_path):
         return chip_path.name, None
 
 
-def compute_crop_margins(chip_files, num_threads=16):
+def infer_chip_grid(chip_files, num_threads=16):
     """
-    Work out how many pixels to trim from each side of each chip prediction so
-    that overlapping chips tile the mosaic without overlap.
-
-    Half the overlap is trimmed from every side that has a neighbouring chip, so
-    each mosaic pixel comes from the chip where it sits furthest from the edge.
-    Sides without a neighbour (edge of the chip set, or chips removed by the
-    prediction mask) are kept whole. Where two such sides meet next to a missing
-    chip they can overlap in a small corner, but only inside the missing chip's
-    footprint, which is outside the prediction mask. The chip step is inferred
-    from the spacing of the chip origins.
+    Work out the regular grid the chips were cut on, from their origins.
 
     Returns:
-        Dict of chip file name -> (left, top, right, bottom) margins in pixels.
-        Empty if chips do not overlap or the grid cannot be inferred.
+        Dict with "cells" (chip file name -> (col, row)), "chip_px" and "step_px",
+        or None if the chips do not overlap or are not on a regular grid.
     """
     # suppress_stderr swaps a process-wide file descriptor, so it wraps the whole
     # pool rather than each thread
@@ -216,7 +217,7 @@ def compute_crop_margins(chip_files, num_threads=16):
         headers = dict(pool.map(_read_chip_header, chip_files))
     headers = {k: v for k, v in headers.items() if v is not None}
     if len(headers) < 2:
-        return {}
+        return None
 
     xs, ys, res_x, res_y, widths, heights = (
         np.array(v) for v in zip(*headers.values())
@@ -228,9 +229,9 @@ def compute_crop_margins(chip_files, num_threads=16):
         and np.all(heights == widths[0])
     ):
         logging.warning(
-            "Chips differ in size or resolution; predictions will not be cropped."
+            "Chips differ in size or resolution; overlaps will not be resolved."
         )
-        return {}
+        return None
     res = res_x[0]
     chip_px = int(widths[0])
 
@@ -240,13 +241,10 @@ def compute_crop_margins(chip_files, num_threads=16):
     ]
     steps = np.concatenate([s for s in steps if len(s)])
     if not len(steps):
-        return {}
+        return None
     step_px = int(steps.min())
-    overlap_px = chip_px - step_px
-    if overlap_px <= 0:
-        return {}
-    first = overlap_px // 2
-    second = overlap_px - first
+    if step_px >= chip_px:
+        return None
 
     cols = np.round((xs - xs.min()) / (step_px * res)).astype(int)
     rows = np.round((ys.max() - ys) / (step_px * res)).astype(int)
@@ -255,24 +253,49 @@ def compute_crop_margins(chip_files, num_threads=16):
     )
     if not on_grid:
         logging.warning(
-            "Chip origins are not on a regular grid; predictions will not be cropped."
+            "Chip origins are not on a regular grid; overlaps will not be resolved."
         )
-        return {}
+        return None
 
-    occupied = set(zip(cols.tolist(), rows.tolist()))
+    logging.info(
+        f"Chip grid: {chip_px} px chips, {step_px} px step, "
+        f"{chip_px - step_px} px overlap."
+    )
+    cells = dict(zip(headers, zip(cols.tolist(), rows.tolist())))
+    return {"cells": cells, "chip_px": chip_px, "step_px": step_px}
+
+
+def compute_crop_margins(grid):
+    """
+    Work out how many pixels to trim from each side of each chip prediction so
+    that overlapping chips tile the mosaic without overlap.
+
+    Half the overlap is trimmed from every side that has a neighbouring chip, so
+    each mosaic pixel comes from the chip where it sits furthest from the edge.
+    Sides without a neighbour (edge of the chip set, or chips removed by the
+    prediction mask) are kept whole. Where two such sides meet next to a missing
+    chip they can overlap in a small corner, but only inside the missing chip's
+    footprint, which is outside the prediction mask.
+
+    Returns:
+        Dict of chip file name -> (left, top, right, bottom) margins in pixels.
+        Empty if grid is None.
+    """
+    if grid is None:
+        return {}
+    overlap_px = grid["chip_px"] - grid["step_px"]
+    first = overlap_px // 2
+    second = overlap_px - first
+
+    occupied = set(grid["cells"].values())
     margins = {}
-    for name, c, r in zip(headers, cols.tolist(), rows.tolist()):
+    for name, (c, r) in grid["cells"].items():
         margins[name] = (
             first if (c - 1, r) in occupied else 0,
             first if (c, r - 1) in occupied else 0,
             second if (c + 1, r) in occupied else 0,
             second if (c, r + 1) in occupied else 0,
         )
-
-    logging.info(
-        f"Chip grid: {chip_px} px chips, {step_px} px step, {overlap_px} px overlap. "
-        f"Predictions are cropped by up to {first}/{second} px per side before mosaicking."
-    )
     return margins
 
 
@@ -327,7 +350,14 @@ def _writer_worker(write_queue, temp_dir, crop_margins):
 
 
 def predict_chips(
-    model, input_dir, temp_dir, device, batch_size=32, num_workers=4, use_tta=False
+    model,
+    input_dir,
+    temp_dir,
+    device,
+    batch_size=32,
+    num_workers=4,
+    use_tta=False,
+    overlap_mode="crop",
 ):
     """
     Run batched inference on all chips in input_dir and save to temp_dir.
@@ -335,6 +365,9 @@ def predict_chips(
     Args:
         batch_size: Number of chips per GPU forward pass.
         num_workers: CPU workers for DataLoader prefetch.
+        overlap_mode: How overlapping chip predictions are resolved. "crop" trims
+            half the overlap from each side so the tiles do not overlap; "none"
+            writes every chip's full prediction, for per-chip diagnostics.
     """
     transform = get_preprocessing()
     chip_files = sorted(input_dir.glob("*.tif"))
@@ -348,7 +381,8 @@ def predict_chips(
         f"(batch_size={batch_size}, num_workers={num_workers})..."
     )
 
-    crop_margins = compute_crop_margins(chip_files)
+    grid = infer_chip_grid(chip_files) if overlap_mode == "crop" else None
+    crop_margins = compute_crop_margins(grid)
 
     dataset = ChipInferenceDataset(chip_files, transform)
     loader = torch.utils.data.DataLoader(
@@ -375,6 +409,7 @@ def predict_chips(
         writer_threads.append(t)
 
     output_files = []
+    unreadable = []
     use_amp = device == "cuda"
 
     with torch.no_grad():
@@ -420,11 +455,22 @@ def predict_chips(
 
                 if valid_bool:
                     output_files.append(temp_dir / Path(chip_path_str).name)
+                else:
+                    unreadable.append(Path(chip_path_str).name)
 
     # Signal writer to finish and wait for all writes to complete
     write_queue.put(None)
     for t in writer_threads:
         t.join()
+
+    if unreadable:
+        # neighbouring chips are cropped towards these, so their area is left
+        # with no prediction at all
+        logging.warning(
+            f"{len(unreadable)} chips could not be read and have no prediction; "
+            f"their area will have no lines: {', '.join(unreadable[:10])}"
+            + (" ..." if len(unreadable) > 10 else "")
+        )
 
     return output_files
 
@@ -495,6 +541,26 @@ def build_vrt(vrt_path, input_files):
     except Exception as e:
         logging.error(f"Error building VRT: {e}")
         return False
+
+
+# the 8 neighbours in order round the ring, as (row, col) offsets
+_RING_OFFSETS = ((-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1))
+
+
+def crossing_number(skeleton):
+    """
+    For every pixel, count the separate runs of skeleton pixels round its 8-pixel
+    ring (the number of background -> skeleton steps going round once).
+    """
+    padded = np.pad(skeleton.astype(bool), 1)
+    h, w = skeleton.shape
+    ring = [
+        padded[1 + dr : 1 + dr + h, 1 + dc : 1 + dc + w] for dr, dc in _RING_OFFSETS
+    ]
+    runs = np.zeros((h, w), dtype=np.uint8)
+    for previous, current in zip(ring[-1:] + ring[:-1], ring):
+        runs += current & ~previous
+    return runs
 
 
 # orthogonal neighbours first, so a walk along a staircase does not cut a corner
@@ -647,14 +713,19 @@ def process_chunk_worker(args):
             # 2. Skeletonise
             skeleton_chunk = skeletonize(binary_chunk).astype(np.uint8)
 
-            # 3. Junction breaker: pixels with >2 connected neighbours are branch points.
-            # Convolve with a flat 3x3 kernel — each skeleton pixel accumulates itself + neighbours.
-            # Sum > 3 means the pixel (value 1) has 3+ skeleton neighbours, i.e. it is a junction.
-            neighbors = convolve(
-                skeleton_chunk, np.ones((3, 3), dtype=np.uint8), mode="constant", cval=0
-            )
-            junctions = (neighbors > 3) & (skeleton_chunk == 1)
-            skeleton_chunk[junctions] = 0
+            # 3. Junction breaker: remove branch points, i.e. skeleton pixels with
+            # 3+ separate runs of skeleton pixels around their 8-pixel ring.
+            # Counting neighbours instead would also break single lines at
+            # staircase steps, where a pixel has 3 neighbours in 2 runs.
+            # Repeat until none are left: removing a branch point can leave the
+            # pixels round it touching diagonally, still joining the branches.
+            while True:
+                junctions = (crossing_number(skeleton_chunk) >= 3) & (
+                    skeleton_chunk == 1
+                )
+                if not junctions.any():
+                    break
+                skeleton_chunk[junctions] = 0
 
             # 4. Trace each skeleton line once (cv2.findContours would trace around
             # the 1-pixel line, giving an out-and-back path of double the length)
@@ -847,6 +918,17 @@ def parse_arguments():
         help="Extend each predicted line at both ends by this distance in metres. Small extensions help connect lines that stop just short of a junction. Set to 0 to disable. Default: 0.5.",
     )
     parser.add_argument(
+        "--overlap-mode",
+        choices=["crop", "none"],
+        default="crop",
+        help="How overlapping chip predictions are combined. 'crop' keeps each pixel "
+        "from the chip where it is furthest from the edge; use it for production "
+        "lines. 'none' keeps every chip's full "
+        "prediction in temp_preds (for per-chip diagnostics such as example_plots.py); "
+        "overlaps in the mosaic then come from whichever chip is listed last. "
+        "Default: crop.",
+    )
+    parser.add_argument(
         "--prediction-mask",
         type=Path,
         default=None,
@@ -934,6 +1016,7 @@ def main():
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             use_tta=args.tta,
+            overlap_mode=args.overlap_mode,
         )
 
     if not pred_files:

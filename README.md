@@ -188,6 +188,8 @@ python unet/predict.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff
 
 As with the evaluate script, predict will use the latest trained model in `models/` unless the `--model` argument is used to specify a different one.
 
+Chips overlap, so most mosaic pixels are predicted by more than one chip. Each pixel is taken from the chip where it sits furthest from the chip edge, so the cropped tiles fit together without overlapping. `--overlap-mode none` keeps every chip's full prediction in `temp_preds` instead, for per-chip diagnostics (`example_plots.py` uses it); don't use it for production lines.
+
 ## 8. Run line evaluation
 The model's aim is to predict visible boundary lines. In this evaluation a predicted line segment is counted as a True Positive (TP) if it falls within a specified buffer distance of the mapped ground truth line.
 
@@ -198,6 +200,11 @@ python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_202
 ```
 
 When the optional `--prediction-mask` argument is provided, the ground truth parcel lines are clipped to the mask before evaluation. This ensures FN computation also respects the prediction mask boundary, preventing artificially high FN counts outside the area of interest. The mask is reprojected to the prediction lines' CRS on load.
+
+To compare two runs over the same chips (for example before and after a code change), evaluate both with `line_evaluate.py` and then run `compare_runs.py`. It reports precision, recall and F1 for each, how fragmented the lines are, whether line ends cluster at chip or chunk seams, and a spatial block bootstrap showing whether the difference is consistent across the area or down to chance.
+```bash
+python unet/compare_runs.py --baseline outputs/predictions/<old>_boundaries.gpkg --candidate outputs/predictions/<new>_boundaries.gpkg --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --output-json outputs/predictions/compare.json
+```
 ```bash
 python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch.gpkg --parcels inputs/gretna_parcels.gpkg --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --buffer-dist 3 --prediction-mask inputs/gretna_prediction_mask.gpkg
 ```

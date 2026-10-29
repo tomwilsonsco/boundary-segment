@@ -120,6 +120,9 @@ def run_unet_predict(input_dir, output_dir, model_path=None):
         "--output-dir",
         str(output_dir),
         "--keep-preds",
+        # full per-chip predictions, so each one lines up with its chip and mask
+        "--overlap-mode",
+        "none",
     ]
 
     if model_path:
