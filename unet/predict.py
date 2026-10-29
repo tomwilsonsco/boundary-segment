@@ -8,6 +8,7 @@ import queue
 import shutil
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -18,13 +19,14 @@ import geopandas as gpd
 import numpy as np
 import rasterio
 import segmentation_models_pytorch as smp
+import shapely
 import torch
 from albumentations.pytorch import ToTensorV2
 from osgeo import gdal
 from rasterio.transform import Affine
 from rasterio.windows import Window
 from scipy.ndimage import convolve
-from shapely.geometry import LineString
+from shapely.geometry import LineString, MultiLineString
 from skimage.morphology import skeletonize
 from tqdm import tqdm
 
@@ -182,11 +184,104 @@ class ChipInferenceDataset(torch.utils.data.Dataset):
         return img_tensor, str(chip_path), trans_tuple, crs_str, True
 
 
-def _writer_worker(write_queue, temp_dir):
+def _read_chip_header(chip_path):
+    try:
+        with rasterio.open(chip_path) as src:
+            t = src.transform
+            return chip_path.name, (t.c, t.f, t.a, -t.e, src.width, src.height)
+    except Exception:
+        return chip_path.name, None
+
+
+def compute_crop_margins(chip_files, num_threads=16):
+    """
+    Work out how many pixels to trim from each side of each chip prediction so
+    that overlapping chips tile the mosaic without overlap.
+
+    Half the overlap is trimmed from every side that has a neighbouring chip, so
+    each mosaic pixel comes from the chip where it sits furthest from the edge.
+    Sides without a neighbour (edge of the chip set, or chips removed by the
+    prediction mask) are kept whole. Where two such sides meet next to a missing
+    chip they can overlap in a small corner, but only inside the missing chip's
+    footprint, which is outside the prediction mask. The chip step is inferred
+    from the spacing of the chip origins.
+
+    Returns:
+        Dict of chip file name -> (left, top, right, bottom) margins in pixels.
+        Empty if chips do not overlap or the grid cannot be inferred.
+    """
+    # suppress_stderr swaps a process-wide file descriptor, so it wraps the whole
+    # pool rather than each thread
+    with suppress_stderr(), ThreadPoolExecutor(max_workers=num_threads) as pool:
+        headers = dict(pool.map(_read_chip_header, chip_files))
+    headers = {k: v for k, v in headers.items() if v is not None}
+    if len(headers) < 2:
+        return {}
+
+    xs, ys, res_x, res_y, widths, heights = (
+        np.array(v) for v in zip(*headers.values())
+    )
+    if not (
+        np.allclose(res_x, res_x[0])
+        and np.allclose(res_y, res_x[0])
+        and np.all(widths == widths[0])
+        and np.all(heights == widths[0])
+    ):
+        logging.warning(
+            "Chips differ in size or resolution; predictions will not be cropped."
+        )
+        return {}
+    res = res_x[0]
+    chip_px = int(widths[0])
+
+    # smallest spacing between distinct chip origins, in pixels
+    steps = [
+        np.diff(np.unique(np.round((v - v.min()) / res).astype(int))) for v in (xs, ys)
+    ]
+    steps = np.concatenate([s for s in steps if len(s)])
+    if not len(steps):
+        return {}
+    step_px = int(steps.min())
+    overlap_px = chip_px - step_px
+    if overlap_px <= 0:
+        return {}
+    first = overlap_px // 2
+    second = overlap_px - first
+
+    cols = np.round((xs - xs.min()) / (step_px * res)).astype(int)
+    rows = np.round((ys.max() - ys) / (step_px * res)).astype(int)
+    on_grid = np.allclose(xs, xs.min() + cols * step_px * res, atol=res / 2) and (
+        np.allclose(ys, ys.max() - rows * step_px * res, atol=res / 2)
+    )
+    if not on_grid:
+        logging.warning(
+            "Chip origins are not on a regular grid; predictions will not be cropped."
+        )
+        return {}
+
+    occupied = set(zip(cols.tolist(), rows.tolist()))
+    margins = {}
+    for name, c, r in zip(headers, cols.tolist(), rows.tolist()):
+        margins[name] = (
+            first if (c - 1, r) in occupied else 0,
+            first if (c, r - 1) in occupied else 0,
+            second if (c + 1, r) in occupied else 0,
+            second if (c, r + 1) in occupied else 0,
+        )
+
+    logging.info(
+        f"Chip grid: {chip_px} px chips, {step_px} px step, {overlap_px} px overlap. "
+        f"Predictions are cropped by up to {first}/{second} px per side before mosaicking."
+    )
+    return margins
+
+
+def _writer_worker(write_queue, temp_dir, crop_margins):
     """
     Background thread worker that consumes (prob_map, chip_path, ...) items from
     write_queue and writes them as single-band float32 GeoTIFF files, decoupling
-    disk I/O from GPU inference.
+    disk I/O from GPU inference. Each prediction is cropped by its margins in
+    crop_margins (if any) so the written tiles do not overlap.
     """
     while True:
         item = write_queue.get()
@@ -204,6 +299,15 @@ def _writer_worker(write_queue, temp_dir):
         # Reconstruct affine transform
         transform = Affine(*trans_tuple)
 
+        left, top, right, bottom = crop_margins.get(chip_path.name, (0, 0, 0, 0))
+        if left or top or right or bottom:
+            h, w = prob_map.shape
+            prob_map = prob_map[top : h - bottom, left : w - right]
+            transform = transform * Affine.translation(left, top)
+
+        # nodata -1 rather than 0: fp16 sigmoid underflows to exactly 0 for
+        # confident background, which must stay valid, while the intermediate VRTs
+        # in build_vrt need a nodata value so their empty areas stay transparent
         profile = {
             "driver": "GTiff",
             "dtype": "float32",
@@ -213,7 +317,7 @@ def _writer_worker(write_queue, temp_dir):
             "transform": transform,
             "crs": crs_str,
             "compress": "lzw",
-            "nodata": 0,
+            "nodata": -1,
         }
 
         with rasterio.open(out_path, "w", **profile) as dst:
@@ -244,6 +348,8 @@ def predict_chips(
         f"(batch_size={batch_size}, num_workers={num_workers})..."
     )
 
+    crop_margins = compute_crop_margins(chip_files)
+
     dataset = ChipInferenceDataset(chip_files, transform)
     loader = torch.utils.data.DataLoader(
         dataset,
@@ -261,7 +367,9 @@ def predict_chips(
     writer_threads = []
     for _ in range(num_writers):
         t = threading.Thread(
-            target=_writer_worker, args=(write_queue, temp_dir), daemon=True
+            target=_writer_worker,
+            args=(write_queue, temp_dir, crop_margins),
+            daemon=True,
         )
         t.start()
         writer_threads.append(t)
@@ -389,11 +497,117 @@ def build_vrt(vrt_path, input_files):
         return False
 
 
+# orthogonal neighbours first, so a walk along a staircase does not cut a corner
+# and strand the corner pixel
+_NEIGHBOUR_OFFSETS = (
+    (-1, 0),
+    (1, 0),
+    (0, -1),
+    (0, 1),
+    (-1, -1),
+    (-1, 1),
+    (1, -1),
+    (1, 1),
+)
+
+
+def trace_skeleton_paths(skeleton):
+    """
+    Trace a junction-free 1-pixel skeleton into ordered pixel paths, visiting each
+    pixel once. Open lines are walked from one end to the other; closed loops are
+    returned with the first pixel repeated at the end.
+
+    Returns:
+        List of (N, 2) int arrays of (row, col) pixel indices.
+    """
+    rows, cols = np.nonzero(skeleton)
+    pixels = set(zip(rows.tolist(), cols.tolist()))
+
+    def neighbours(p):
+        return [
+            (p[0] + dr, p[1] + dc)
+            for dr, dc in _NEIGHBOUR_OFFSETS
+            if (p[0] + dr, p[1] + dc) in pixels
+        ]
+
+    visited = set()
+
+    def walk(start):
+        path = [start]
+        visited.add(start)
+        current = start
+        while True:
+            nxt = next((q for q in neighbours(current) if q not in visited), None)
+            if nxt is None:
+                return path
+            visited.add(nxt)
+            path.append(nxt)
+            current = nxt
+
+    paths = []
+    # ends of open lines first, then whatever is left (closed loops)
+    ends = sorted(p for p in pixels if len(neighbours(p)) <= 1)
+    for start in ends + sorted(pixels):
+        if start in visited:
+            continue
+        path = walk(start)
+        last = path[-1]
+        if len(path) > 2 and max(abs(last[0] - start[0]), abs(last[1] - start[1])) == 1:
+            path.append(start)
+        paths.append(np.array(path))
+    return paths
+
+
+def _drop_collinear(coords):
+    """Remove vertices that sit on a straight run between their neighbours."""
+    if len(coords) < 3:
+        return coords
+    steps = np.diff(coords, axis=0)
+    keep = np.ones(len(coords), dtype=bool)
+    keep[1:-1] = np.any(steps[1:] != steps[:-1], axis=1)
+    return coords[keep]
+
+
+def _split_to_core(path, core_cols, core_rows):
+    """
+    Keep the parts of a pixel path (global (col, row) indices) that belong to this
+    chunk's core. A segment belongs to the chunk whose core holds its
+    lexicographically smaller end pixel, so every segment is kept by exactly one
+    chunk, and pieces from neighbouring chunks share their end pixels exactly.
+    """
+    seg_start, seg_end = path[:-1], path[1:]
+    first_is_smaller = (seg_start[:, 0] < seg_end[:, 0]) | (
+        (seg_start[:, 0] == seg_end[:, 0]) & (seg_start[:, 1] <= seg_end[:, 1])
+    )
+    owner = np.where(first_is_smaller[:, None], seg_start, seg_end)
+    owned = (
+        (owner[:, 0] >= core_cols[0])
+        & (owner[:, 0] < core_cols[1])
+        & (owner[:, 1] >= core_rows[0])
+        & (owner[:, 1] < core_rows[1])
+    )
+    if owned.all():
+        return [path]
+
+    pieces = []
+    # runs of consecutive owned segments; segment i joins vertices i and i+1
+    padded = np.concatenate([[False], owned, [False]]).astype(np.int8)
+    run_starts = np.flatnonzero(np.diff(padded) == 1)
+    run_ends = np.flatnonzero(np.diff(padded) == -1)
+    for s, e in zip(run_starts, run_ends):
+        pieces.append(path[s : e + 1])
+    return pieces
+
+
 def process_chunk_worker(args):
     """
     Multiprocessing worker that reads one spatial chunk of the prediction VRT,
-    applies morphological closing, skeletonises the binary mask, removes junction
-    pixels, and returns a list of vectorised line coordinate arrays.
+    plus a halo of neighbouring pixels, applies morphological closing,
+    skeletonises the binary mask, removes junction pixels, traces the skeleton
+    into lines, and returns the line coordinate arrays that fall in the chunk.
+
+    The halo means the skeleton near the chunk edge is the same as the one the
+    neighbouring chunk sees, so lines can be joined back up across chunks.
     """
     (
         vrt_path,
@@ -402,6 +616,7 @@ def process_chunk_worker(args):
         width,
         height,
         chunk_size,
+        halo,
         threshold,
         min_contour_length,
         transform_tuple,
@@ -412,7 +627,11 @@ def process_chunk_worker(args):
         with rasterio.open(vrt_path) as src:
             chunk_height = min(chunk_size, height - row_start)
             chunk_width = min(chunk_size, width - col_start)
-            window = Window(col_start, row_start, chunk_width, chunk_height)
+            read_col = max(0, col_start - halo)
+            read_row = max(0, row_start - halo)
+            read_width = min(width, col_start + chunk_width + halo) - read_col
+            read_height = min(height, row_start + chunk_height + halo) - read_row
+            window = Window(read_col, read_row, read_width, read_height)
             chunk = src.read(1, window=window)
 
             # Skip empty chunks to save processing time and memory
@@ -437,34 +656,33 @@ def process_chunk_worker(args):
             junctions = (neighbors > 3) & (skeleton_chunk == 1)
             skeleton_chunk[junctions] = 0
 
-            contours, _ = cv2.findContours(
-                skeleton_chunk, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
-            )
-
+            # 4. Trace each skeleton line once (cv2.findContours would trace around
+            # the 1-pixel line, giving an out-and-back path of double the length)
+            core_cols = (col_start, col_start + chunk_width)
+            core_rows = (row_start, row_start + chunk_height)
             chunk_lines = []
-            for cnt in contours:
-                if len(cnt) < min_contour_length:
+            for path in trace_skeleton_paths(skeleton_chunk):
+                if len(path) < max(min_contour_length, 2):
                     continue
-                coords_pix = cnt.squeeze().astype(float)
-                if len(coords_pix.shape) != 2:
-                    continue
-
-                # Vectorized affine transformation relative to VRT start
-                xs = coords_pix[:, 0] + col_start
-                ys = coords_pix[:, 1] + row_start
-                xs_map, ys_map = transform * (xs + 0.5, ys + 0.5)
-                coords_map = np.column_stack((xs_map, ys_map))
-
-                if len(coords_map) >= 2:
-                    chunk_lines.append(coords_map)
+                # (row, col) in the window -> global (col, row)
+                path_global = np.column_stack(
+                    (path[:, 1] + read_col, path[:, 0] + read_row)
+                )
+                for piece in _split_to_core(path_global, core_cols, core_rows):
+                    piece = _drop_collinear(piece).astype(float)
+                    xs_map, ys_map = transform * (piece[:, 0] + 0.5, piece[:, 1] + 0.5)
+                    chunk_lines.append(np.column_stack((xs_map, ys_map)))
 
             return chunk_lines
 
 
 def process_vrt_to_lines(
-    vrt_path, chunk_size=2048, threshold=0.5, min_contour_length=5
+    vrt_path, chunk_size=2048, threshold=0.5, min_contour_length=5, halo=64
 ):
-    """Process VRT in chunks to create skeleton and vectorize."""
+    """
+    Process VRT in chunks to create skeleton and vectorize. Chunks overlap by
+    `halo` pixels; line pieces cut at chunk edges are merged back together.
+    """
     logging.info("Opening VRT for chunked processing...")
 
     with rasterio.open(vrt_path) as src:
@@ -495,6 +713,7 @@ def process_vrt_to_lines(
                         width,
                         height,
                         chunk_size,
+                        halo,
                         threshold,
                         min_contour_length,
                         transform_tuple,
@@ -515,6 +734,14 @@ def process_vrt_to_lines(
             ):
                 for coords_map in result_lines:
                     lines.append(LineString(coords_map))
+
+        # join pieces that were cut at chunk edges; pieces only share end
+        # vertices where a line crosses a chunk edge
+        if lines:
+            n_pieces = len(lines)
+            merged = shapely.line_merge(MultiLineString(lines))
+            lines = list(getattr(merged, "geoms", [merged]))
+            logging.info(f"Merged {n_pieces} line pieces into {len(lines)} lines.")
 
         return lines, crs
 
@@ -599,7 +826,7 @@ def parse_arguments():
         "--min-contour-length",
         type=int,
         default=5,
-        help="Minimum number of vertices a predicted line segment must have to be kept. Shorter segments are discarded. Default: 5.",
+        help="Minimum number of skeleton pixels a predicted line segment must have to be kept. Shorter segments are discarded. Default: 5.",
     )
     parser.add_argument(
         "--batch-size",
@@ -746,7 +973,8 @@ def main():
         mask_union = mask_gdf.union_all()
         if lines:
             gdf_lines = gpd.GeoDataFrame(geometry=lines, crs=crs)
-            gdf_lines = gpd.clip(gdf_lines, mask_union)
+            # clip returns MultiLineStrings; explode back to single lines
+            gdf_lines = gpd.clip(gdf_lines, mask_union).explode(index_parts=False)
             lines = list(gdf_lines.geometry)
             logging.info(
                 f"Clipped prediction lines to mask: {len(lines)} lines remaining."

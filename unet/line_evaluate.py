@@ -7,6 +7,7 @@ from pathlib import Path
 
 import geopandas as gpd
 import rasterio as rio
+import shapely
 from shapely.geometry import GeometryCollection, box
 from shapely.ops import linemerge, unary_union
 from shapely.strtree import STRtree
@@ -256,8 +257,20 @@ def main(args):
     logging.info("Selecting parcels intersecting chips index...")
     intersecting_parcels = parcels_gdf[parcels_gdf.intersects(index_union)]
 
-    logging.info("Converting intersecting parcels to boundary lines...")
-    parcel_lines = intersecting_parcels.geometry.boundary
+    logging.info("Converting intersecting parcels to dissolved boundary lines...")
+    # dissolve so edges shared by neighbouring parcels are only counted once,
+    # then explode so each line is split against nearby buffers only
+    dissolved_lines = shapely.line_merge(
+        intersecting_parcels.geometry.boundary.union_all()
+    )
+    parcel_lines = (
+        gpd.GeoSeries([dissolved_lines], crs=crs)
+        .explode(index_parts=False)
+        .reset_index(drop=True)
+    )
+    parcel_lines = parcel_lines[
+        ~parcel_lines.is_empty & parcel_lines.geom_type.isin(["LineString"])
+    ]
 
     logging.info("Clipping boundary lines by chips index...")
     parcel_lines_gdf = gpd.GeoDataFrame(geometry=parcel_lines, crs=crs)
