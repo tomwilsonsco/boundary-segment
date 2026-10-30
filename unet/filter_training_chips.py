@@ -76,22 +76,16 @@ def main(args):
     chip_dir = args.chip_dir
 
     if not input_path.exists():
-        logging.error(f"Input file not found: {input_path}")
-        return
+        raise FileNotFoundError(f"Input file not found: {input_path}")
 
     logging.info(f"Loading metrics from {input_path}...")
-    try:
-        gdf = gpd.read_file(input_path)
-    except Exception as e:
-        logging.error(f"Failed to read GeoPackage: {e}")
-        return
+    gdf = gpd.read_file(input_path)
 
     # ensure required columns exist and fill any NaNs (e.g. 0/0 division in precision/recall)
     cols_to_check = ["TP_length", "FP_length", "FN_length", "precision", "recall"]
     for col in cols_to_check:
         if col not in gdf.columns:
-            logging.error(f"Missing required column in input data: {col}")
-            return
+            raise ValueError(f"Missing required column in input data: {col}")
         gdf[col] = pd.to_numeric(gdf[col], errors="coerce").fillna(0)
 
     # calculate total ground truth boundary length
@@ -118,33 +112,30 @@ def main(args):
         new_removals_df = pd.DataFrame(columns=["file_name", "remove_condition"])
     else:
         if "file_name" not in to_remove.columns:
-            logging.error("The column 'file_name' was not found in the input data.")
-            return
+            raise ValueError("The column 'file_name' was not found in the input data.")
         new_removals_df = to_remove[["file_name", "remove_condition"]]
 
     csv_path = chip_dir / "chips_ignore.csv"
 
     # handle existing chips_ignore.csv - e.g. background only chips
     if csv_path.exists():
-        try:
-            existing_df = pd.read_csv(csv_path)
-            conditions_to_keep = [
-                "outside image bounds",
-                "outside training",
-                "outside prediction mask",
+        # a read failure must stop the run: carrying on would drop the
+        # outside-mask exclusions and let those chips into training
+        existing_df = pd.read_csv(csv_path)
+        conditions_to_keep = [
+            "outside image bounds",
+            "outside training",
+            "outside prediction mask",
+        ]
+        if "remove_condition" in existing_df.columns:
+            kept_df = existing_df[
+                existing_df["remove_condition"].isin(conditions_to_keep)
             ]
-            if "remove_condition" in existing_df.columns:
-                kept_df = existing_df[
-                    existing_df["remove_condition"].isin(conditions_to_keep)
-                ]
-            else:
-                kept_df = pd.DataFrame(columns=["file_name", "remove_condition"])
-            logging.info(
-                f"Loaded existing list and kept {len(kept_df)} manually/externally defined exclusions."
-            )
-        except Exception as e:
-            logging.error(f"Failed to read existing CSV: {e}")
+        else:
             kept_df = pd.DataFrame(columns=["file_name", "remove_condition"])
+        logging.info(
+            f"Loaded existing list and kept {len(kept_df)} manually/externally defined exclusions."
+        )
     else:
         kept_df = pd.DataFrame(columns=["file_name", "remove_condition"])
 

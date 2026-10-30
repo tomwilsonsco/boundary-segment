@@ -232,6 +232,14 @@ def parse_arguments(args=None):
         help="Directory to save trained model files and the training loss plot. Default: models.",
     )
     parser.add_argument(
+        "--model-path",
+        type=Path,
+        default=None,
+        help="Exact path for the saved model .pth. The checkpoint and loss plot are "
+        "written next to it. Overrides --output-dir and --desc naming. Use this when "
+        "another step needs to know the model path in advance.",
+    )
+    parser.add_argument(
         "--resume",
         type=Path,
         default=None,
@@ -260,6 +268,14 @@ def parse_arguments(args=None):
     )
 
     return parser.parse_args(args)
+
+
+def strip_compile_prefix(state_dict):
+    """Remove the '_orig_mod.' key prefix that torch.compile adds to saved weights."""
+    return {
+        (k[len("_orig_mod.") :] if k.startswith("_orig_mod.") else k): v
+        for k, v in state_dict.items()
+    }
 
 
 def _seed_worker(worker_id):
@@ -304,9 +320,15 @@ def main(args):
     else:
         base_name = f"{timestamp}_{arch_name}"
 
-    model_save_path = args.output_dir / f"{base_name}.pth"
-    checkpoint_path = args.output_dir / f"{base_name}_checkpoint.pth"
-    loss_plot_path = args.output_dir / f"{base_name}_loss.png"
+    if args.model_path is not None:
+        args.model_path.parent.mkdir(parents=True, exist_ok=True)
+        model_save_path = args.model_path
+        out_dir, base_name = args.model_path.parent, args.model_path.stem
+    else:
+        model_save_path = args.output_dir / f"{base_name}.pth"
+        out_dir = args.output_dir
+    checkpoint_path = out_dir / f"{base_name}_checkpoint.pth"
+    loss_plot_path = out_dir / f"{base_name}_loss.png"
 
     logging.info(f"Experiment: {args.desc if args.desc else 'N/A'}")
     logging.info(f"Model architecture: {args.arch}")
@@ -441,16 +463,28 @@ def main(args):
     epochs_no_improve = 0
     train_losses = []
     val_losses = []
+    model_saved = False
 
-    # Check if we should resume from existing checkpoint
-    if args.resume and args.resume.exists():
+    # Resume from an existing checkpoint or model. An explicit --resume that
+    # cannot be loaded is an error: falling back to ImageNet weights would
+    # silently train a different model.
+    if args.resume:
+        if not args.resume.exists():
+            raise FileNotFoundError(
+                f"Checkpoint to resume from not found: {args.resume}"
+            )
         logging.info(f"\nResuming from checkpoint: {args.resume}")
+        # load into the uncompiled module, so a file saved with or without
+        # torch.compile loads whether or not this run compiles
+        target_model = getattr(model, "_orig_mod", model)
         try:
             checkpoint = torch.load(args.resume, map_location=DEVICE)
 
             # Check if it's a full checkpoint or just weights
             if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
-                model.load_state_dict(checkpoint["model_state_dict"])
+                target_model.load_state_dict(
+                    strip_compile_prefix(checkpoint["model_state_dict"])
+                )
                 optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
                 start_epoch = checkpoint["epoch"] + 1
                 best_val_loss = checkpoint["best_val_loss"]
@@ -465,23 +499,26 @@ def main(args):
                 )
                 logging.info(f"Will save to new checkpoint: {checkpoint_path}\n")
             elif isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-                model.load_state_dict(checkpoint["state_dict"])
+                target_model.load_state_dict(
+                    strip_compile_prefix(checkpoint["state_dict"])
+                )
                 logging.info("Loaded model weights only (from inference model file).")
                 logging.info(
                     "Optimizer, learning rate, and epochs will start from scratch.\n"
                 )
             else:
-                model.load_state_dict(checkpoint)
+                target_model.load_state_dict(strip_compile_prefix(checkpoint))
                 logging.info(
                     "Loaded model weights only (old format - no optimizer state)"
                 )
                 logging.warning("Optimizer will restart from scratch\n")
         except Exception as e:
-            logging.warning(f"Could not load checkpoint: {e}")
-            logging.info("Starting training from scratch with pretrained encoder...\n")
-    elif args.resume:
-        logging.warning(f"\nCheckpoint specified but not found: {args.resume}")
-        logging.info("Starting training from scratch with pretrained encoder...\n")
+            raise RuntimeError(f"Could not load checkpoint {args.resume}: {e}") from e
+        if start_epoch >= args.epochs:
+            raise ValueError(
+                f"Checkpoint {args.resume} is already at epoch {start_epoch}, "
+                f"so --epochs {args.epochs} leaves nothing to train."
+            )
     else:
         logging.info("\nStarting training from scratch with pretrained encoder...\n")
 
@@ -603,6 +640,7 @@ def main(args):
                 "encoder": args.encoder,
             }
             torch.save(inference_config, model_save_path)
+            model_saved = True
         else:
             epochs_no_improve += 1
             logging.info(f"No improvement for {epochs_no_improve} epoch(s)")
@@ -615,6 +653,11 @@ def main(args):
         logging.info("-" * 30)
 
     logging.info(f"Training Complete. Best Validation Loss: {best_val_loss:.4f}")
+    if not model_saved:
+        raise RuntimeError(
+            f"No model was saved to {model_save_path}: validation loss never "
+            f"improved on {best_val_loss:.4f} (resumed best, or NaN losses)."
+        )
 
     # plot / save training curves
     logging.info(f"Saving training loss plot to {loss_plot_path}...")

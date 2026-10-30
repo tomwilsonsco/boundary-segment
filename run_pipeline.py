@@ -10,6 +10,7 @@ import logging
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -56,6 +57,13 @@ def run_command(cmd_list: list, step_name: str, stdin_input: str = None) -> None
         sys.exit(1)
 
 
+def require_output(path: Path, step_name: str) -> None:
+    """Stop the pipeline if a step did not write the file the next step needs."""
+    if not path.exists():
+        logger.error(f"Step '{step_name}' did not produce expected output: {path}")
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run the full boundary segmentation pipeline."
@@ -93,6 +101,16 @@ def main():
 
     base_model_path = Path(config["models"]["base_model"])
     predictions_dir = Path("outputs/predictions")
+
+    # Every file passed between steps is named here, up front, so no step has to
+    # guess which file the previous one wrote.
+    run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{area_name}"
+    fine_tuned_desc = config["models"]["fine_tuned_desc"]
+    arch = config["parameters"]["train"]["arch"]
+    base_pred_gpkg = predictions_dir / f"{run_id}_base_boundaries.gpkg"
+    eval_lines_gpkg = predictions_dir / f"{base_pred_gpkg.stem}_result_compare.gpkg"
+    fine_tuned_model_path = Path("models") / f"{run_id}_{fine_tuned_desc}_{arch}.pth"
+    final_pred_gpkg = predictions_dir / f"{run_id}_{fine_tuned_desc}_boundaries.gpkg"
 
     logger.info(f"Starting pipeline for area: {area_name}")
 
@@ -178,6 +196,8 @@ def main():
         base_model_path,
         "--num-workers",
         8,
+        "--output-gpkg",
+        base_pred_gpkg,
     ]
     if prediction_mask:
         cmd_step7_init.extend(["--prediction-mask", prediction_mask])
@@ -186,14 +206,7 @@ def main():
         "Step 7 (Initial): Predict with Base Model",
         stdin_input="o\n",
     )
-
-    # Locate the prediction GPKG just written by predict.py (newest by time)
-    pred_files = sorted(predictions_dir.glob("*.gpkg"), key=lambda f: f.stat().st_ctime)
-    if not pred_files:
-        logger.error(f"No prediction GPKG found in {predictions_dir}")
-        sys.exit(1)
-    latest_pred_gpkg = pred_files[-1]
-    logger.info(f"Using prediction file for evaluation: {latest_pred_gpkg}")
+    require_output(base_pred_gpkg, "Step 7 (Initial): Predict with Base Model")
 
     # Step 8: Line Evaluate — produces <pred_stem>_result_compare.gpkg
     p_line_eval = config["parameters"].get("line_evaluate", {})
@@ -201,7 +214,7 @@ def main():
         "python",
         "unet/line_evaluate.py",
         "--pred-gpkg",
-        latest_pred_gpkg,
+        base_pred_gpkg,
         "--parcels",
         parcels_gpkg,
         "--chip-dir",
@@ -212,15 +225,8 @@ def main():
     if prediction_mask:
         cmd_step8.extend(["--prediction-mask", prediction_mask])
     run_command(cmd_step8, "Step 8: Line Evaluate")
-
-    # line_evaluate.py always writes its output as <pred_stem>_result_compare.gpkg
-    # in the same directory as the input prediction GPKG.
-    eval_lines_gpkg = (
-        latest_pred_gpkg.parent / f"{latest_pred_gpkg.stem}_result_compare.gpkg"
-    )
-    if not eval_lines_gpkg.exists():
-        logger.error(f"Expected line evaluate output not found: {eval_lines_gpkg}")
-        sys.exit(1)
+    # line_evaluate.py always writes <pred_stem>_result_compare.gpkg next to its input
+    require_output(eval_lines_gpkg, "Step 8: Line Evaluate")
 
     # Step 9: Chip Metrics
     # --line-comparison: the TP/FP/FN comparison GPKG from line_evaluate
@@ -302,25 +308,13 @@ def main():
         p_train["batch_size"],
         "--lr",
         p_train["lr"],
-        "--desc",
-        config["models"]["fine_tuned_desc"],
+        "--model-path",
+        fine_tuned_model_path,
         "--resume",
         base_model_path,
     ]
     run_command(cmd_step6, "Step 6: Train Fine-Tuned Model")
-
-    # Locate the newly trained model: most-recently created .pth in models/,
-    # excluding training checkpoints.  Using ctime rather than name sort avoids
-    # the risk of the base model sorting alphabetically after the fine-tuned one.
-    models_dir = Path("models")
-    fine_tuned_candidates = sorted(
-        [f for f in models_dir.glob("*.pth") if "_checkpoint.pth" not in f.name],
-        key=lambda f: f.stat().st_ctime,
-    )
-    if not fine_tuned_candidates:
-        logger.error("No fine-tuned model .pth found in models/ after training.")
-        sys.exit(1)
-    fine_tuned_model_path = fine_tuned_candidates[-1]
+    require_output(fine_tuned_model_path, "Step 6: Train Fine-Tuned Model")
     logger.info(f"Using fine-tuned model for final prediction: {fine_tuned_model_path}")
 
     # Step 7 (Final): Predict with the fine-tuned model.
@@ -331,6 +325,8 @@ def main():
         chips_dir,
         "--model",
         fine_tuned_model_path,
+        "--output-gpkg",
+        final_pred_gpkg,
     ]
     if prediction_mask:
         cmd_step7_final.extend(["--prediction-mask", prediction_mask])
@@ -339,6 +335,8 @@ def main():
         "Step 7 (Final): Predict with Fine-Tuned Model",
         stdin_input="o\n",
     )
+    require_output(final_pred_gpkg, "Step 7 (Final): Predict with Fine-Tuned Model")
+    logger.info(f"Final predictions: {final_pred_gpkg}")
 
     # ==========================================
     # Stage 5: Cleanup

@@ -56,21 +56,18 @@ def main(args):
     target_crs = args.crs
     logging.info(f"Assigning CRS: {target_crs}")
 
-    try:
-        options = gdal.BuildVRTOptions(
-            resolution="highest",
-            resampleAlg=gdal.GRA_NearestNeighbour,
-            outputSRS=target_crs,
-        )
-        ds = gdal.BuildVRT(
-            str(output_vrt), [str(f) for f in image_files], options=options
-        )
-        # Release the dataset so that the VRT is closed
-        del ds
-        logging.info("VRT file created successfully!")
-
-    except Exception as e:
-        logging.error(f"Error creating VRT: {e}")
+    options = gdal.BuildVRTOptions(
+        resolution="highest",
+        resampleAlg=gdal.GRA_NearestNeighbour,
+        outputSRS=target_crs,
+    )
+    ds = gdal.BuildVRT(str(output_vrt), [str(f) for f in image_files], options=options)
+    # without GDAL exceptions enabled, a failed build returns None
+    if ds is None:
+        raise RuntimeError(f"GDAL could not build the VRT: {gdal.GetLastErrorMsg()}")
+    # Release the dataset so that the VRT is closed
+    del ds
+    logging.info("VRT file created successfully!")
 
 
 if __name__ == "__main__":

@@ -935,6 +935,14 @@ def parse_arguments():
         help="Path to the prediction mask file (.gpkg or .shp). Output prediction lines are "
         "clipped to the mask before saving.",
     )
+    parser.add_argument(
+        "--output-gpkg",
+        type=Path,
+        default=None,
+        help="Exact path for the output boundaries GeoPackage. Default: "
+        "<output-dir>/<timestamp>_<model>_boundaries.gpkg. Use this when another "
+        "step needs to know the output path in advance.",
+    )
 
     return parser.parse_args()
 
@@ -1067,16 +1075,20 @@ def main():
 
     # 8. Save Output
     if lines:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_name = args.model.stem
-        out_gpkg = args.output_dir / f"{timestamp}_{model_name}_boundaries.gpkg"
+        if args.output_gpkg is not None:
+            out_gpkg = args.output_gpkg
+            out_gpkg.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            model_name = args.model.stem
+            out_gpkg = args.output_dir / f"{timestamp}_{model_name}_boundaries.gpkg"
 
         logging.info(f"Saving {len(lines)} boundaries to {out_gpkg}...")
         gdf = gpd.GeoDataFrame(geometry=lines, crs=crs)
         gdf.to_file(out_gpkg, driver="GPKG")
         logging.info("Done.")
     else:
-        logging.warning("No lines detected.")
+        logging.error("No lines detected.")
 
     # 9. Cleanup
     if not args.keep_preds:
@@ -1086,6 +1098,9 @@ def main():
             vrt_path.unlink()
     else:
         logging.info(f"Temporary files retained in {temp_dir}")
+
+    if not lines:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
