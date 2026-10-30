@@ -1,6 +1,7 @@
 """Compare predicted boundary line geometries against ground truth parcel lines, labelling TP, FP, and FN segments."""
 
 import argparse
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -148,6 +149,20 @@ def parse_arguments(args=None):
         default=None,
         help="Path to the prediction mask file (.gpkg or .shp). Ground truth parcel lines are "
         "clipped to the mask before evaluation.",
+    )
+    parser.add_argument(
+        "--output-gpkg",
+        type=Path,
+        default=None,
+        help="Path for the TP/FP/FN lines GPKG. The results log is appended next to it. "
+        "Default: <pred-gpkg stem>_result_compare.gpkg next to the prediction. Set it "
+        "to evaluate one prediction at more than one buffer distance.",
+    )
+    parser.add_argument(
+        "--metrics-json",
+        type=Path,
+        default=None,
+        help="Optional path to also write the lengths and metrics as JSON.",
     )
 
     return parser.parse_args(args)
@@ -349,17 +364,36 @@ def main(args):
 
     logging.info("\n" + "\n".join(results_text))
 
-    log_file = args.pred_gpkg.parent / "line_evaluate_results.log"
+    output_gpkg = args.output_gpkg or (
+        args.pred_gpkg.parent / f"{args.pred_gpkg.stem}_result_compare.gpkg"
+    )
+    output_gpkg.parent.mkdir(parents=True, exist_ok=True)
+
+    log_file = output_gpkg.parent / "line_evaluate_results.log"
     with open(log_file, "a") as f:
         f.write("\n".join(results_text) + "\n")
 
     logging.info(f"Results appended to {log_file}")
 
+    if args.metrics_json is not None:
+        metrics = {
+            "prediction": str(args.pred_gpkg),
+            "parcels": str(args.parcels),
+            "buffer_dist": args.buffer_dist,
+            "tp_m": float(tp_len),
+            "fp_m": float(fp_len),
+            "fn_m": float(fn_len),
+            "precision": precision,
+            "recall": recall,
+            "f1": f1_score,
+        }
+        args.metrics_json.parent.mkdir(parents=True, exist_ok=True)
+        args.metrics_json.write_text(json.dumps(metrics, indent=2))
+        logging.info(f"Metrics written to {args.metrics_json}")
+
     # Write output in chunks, one component at a time, to avoid OOM from a
     # single large concat + to_file call.
-    output_gpkg = args.pred_gpkg.parent / f"{args.pred_gpkg.stem}_result_compare.gpkg"
     logging.info(f"Saving evaluated lines to {output_gpkg}...")
-    output_gpkg.parent.mkdir(parents=True, exist_ok=True)
     if output_gpkg.exists():
         output_gpkg.unlink()
 

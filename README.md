@@ -265,10 +265,25 @@ The `pipeline_config.yaml` file contains all configurable settings:
 |---------|----------------|
 | `data` | Area name, paths to raw images, parcels GPKG, and optional prediction mask |
 | `models` | Path to the pre-trained base model and description tag for fine-tuning |
-| `parameters` | CRS, chip size/offset/resampling, buffer distance, filter thresholds, training hyperparameters |
+| `parameters` | CRS, chip size/offset/resampling, filter and report buffer distances, filter thresholds, training hyperparameters including early-stop patience |
 | `pipeline_settings` | Whether to preserve intermediate files after completion |
 
 Edit `pipeline_config.yaml` for your area before running.
+
+Each run writes to its own folder, `outputs/predictions/<run_id>/`, where `run_id` is `<timestamp>_<area>`. The fine-tuned model goes to `models/<run_id>_<fine_tuned_desc>_<arch>.pth`. The run folder is kept even when intermediate files are cleaned up, and holds:
+
+| File | Contents |
+|------|----------|
+| `<run_id>_base_boundaries.gpkg` | Lines predicted by the base model |
+| `<run_id>_<fine_tuned_desc>_boundaries.gpkg` | Final lines, predicted by the fine-tuned model |
+| `*_result_compare.gpkg`, `metrics_*.json` | TP/FP/FN lines and metrics: base model at the filter buffer (`base_filter`, used for chip filtering) and at the report buffer (`base`), fine-tuned model at the report buffer |
+| `summary.json` | Run record: input files with checksums, models, chip counts by removal reason and split, and the three sets of metrics |
+| `pipeline_config.yaml`, `chips_ignore.csv`, `chips_index_metrics.gpkg` | The settings and the chip filter result, enough to rebuild this area's training set later |
+| `*_loss.png` | Training and validation loss |
+
+The base model has never seen the area, so its report-buffer metrics are an out-of-sample score. The fine-tuned model is scored on the labels it was trained on, so its metrics are in-sample (see `docs/review_findings.md` 2.4).
+
+`predict.py` overwrites existing chip predictions in `<output-dir>/temp_preds`. Pass `--reuse-existing` (with `--keep-preds` on the first run) to re-vectorise kept predictions, for example at a different `--threshold`, without running inference again.
 
 # Example prediciton
 ![Example plot](plots/apgb_imgs_8832_40320_analysis.png)

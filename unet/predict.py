@@ -104,7 +104,7 @@ def load_model(model_path, device):
     if arch_name == "unetplusplus":
         model = smp.UnetPlusPlus(
             encoder_name=encoder_name,
-            encoder_weights="imagenet",
+            encoder_weights=None,
             in_channels=3,
             classes=1,
             activation=None,
@@ -112,7 +112,7 @@ def load_model(model_path, device):
     elif arch_name == "deeplabv3plus":
         model = smp.DeepLabV3Plus(
             encoder_name=encoder_name,
-            encoder_weights="imagenet",
+            encoder_weights=None,
             in_channels=3,
             classes=1,
             activation=None,
@@ -120,7 +120,7 @@ def load_model(model_path, device):
     elif arch_name == "unet":
         model = smp.Unet(
             encoder_name=encoder_name,
-            encoder_weights="imagenet",
+            encoder_weights=None,
             in_channels=3,
             classes=1,
             activation=None,
@@ -128,7 +128,7 @@ def load_model(model_path, device):
     elif arch_name == "fpn":
         model = smp.FPN(
             encoder_name=encoder_name,
-            encoder_weights="imagenet",
+            encoder_weights=None,
             in_channels=3,
             classes=1,
             activation=None,
@@ -850,7 +850,7 @@ def extend_line(line, distance=0.5):
     return LineString(new_coords)
 
 
-def parse_arguments():
+def parse_arguments(args=None):
     parser = argparse.ArgumentParser(description="Run Inference and Stitch Results")
 
     parser.add_argument(
@@ -943,12 +943,18 @@ def parse_arguments():
         "<output-dir>/<timestamp>_<model>_boundaries.gpkg. Use this when another "
         "step needs to know the output path in advance.",
     )
+    parser.add_argument(
+        "--reuse-existing",
+        action="store_true",
+        help="If <output-dir>/temp_preds already holds chip predictions, skip "
+        "inference and build the lines from them (e.g. to re-run vectorising with "
+        "a different threshold). Without it, existing predictions are overwritten.",
+    )
 
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 
-def main():
-    args = parse_arguments()
+def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if device == "cuda":
@@ -978,23 +984,13 @@ def main():
 
     use_existing = False
     if temp_dir.exists() and any(temp_dir.iterdir()):
-        while True:
-            resp = (
-                input(
-                    f"Directory '{temp_dir}' already exists and contains files. Use existing predictions (u) or overwrite (o)? [u/o]: "
-                )
-                .strip()
-                .lower()
-            )
-            if resp in ["u", "o"]:
-                break
-            logging.warning("Please enter 'u' to use existing or 'o' to overwrite.")
-
-        if resp == "u":
+        if args.reuse_existing:
             use_existing = True
-            logging.info("Skipping inference, using existing predictions...")
+            logging.info(
+                f"Skipping inference, using existing predictions in {temp_dir}"
+            )
         else:
-            logging.info("Overwriting existing predictions...")
+            logging.info(f"Overwriting existing predictions in {temp_dir}")
             shutil.rmtree(temp_dir)
             temp_dir.mkdir(parents=True, exist_ok=True)
     else:
@@ -1104,4 +1100,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(parse_arguments())

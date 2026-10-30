@@ -1,5 +1,7 @@
 pipeline_settings:
-  preserve_intermediate_files: false # if false, deletes all files except final predictions
+  # if false, deletes the GeoTIFFs, VRT, chips, masks and dataset split after the run.
+  # The run folder outputs/predictions/<run_id>/ and the model in models/ are always kept.
+  preserve_intermediate_files: false
 
 data:
   # the area name, to dynamically generate intermediate paths
@@ -33,7 +35,10 @@ parameters:
     resampling_factor: 0.5
     
   line_evaluate:
-    buffer_dist: 3.0 # metres; maps to --buffer-dist in line_evaluate.py
+    # metres; the stricter buffer used to score chips for removal from training
+    filter_buffer_dist: 3.0
+    # metres; the business-rule buffer used for the metrics in each run's summary.json
+    report_buffer_dist: 8.0
     
   filter_chips:
     min_training_length: 30
@@ -44,6 +49,9 @@ parameters:
     arch: "unetplusplus"
     encoder: "efficientnet-b3"
     loss_method: "bce_dice"
-    epochs: 10 # might need more - keep check validation loss vs training loss
+    epochs: 10 # see docs/review_findings.md 2.6 before raising this
+    # stop after this many epochs without validation improvement; above the LR
+    # scheduler's patience (3) so a halved learning rate gets one epoch to help
+    early_stop_patience: 4
     batch_size: 8
     lr: 0.00001 # 10% of LR default in train.py as fine tune
