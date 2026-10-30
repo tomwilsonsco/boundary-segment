@@ -200,14 +200,21 @@ python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_202
 ```
 
 When the optional `--prediction-mask` argument is provided, the ground truth parcel lines are clipped to the mask before evaluation. This ensures FN computation also respects the prediction mask boundary, preventing artificially high FN counts outside the area of interest. The mask is reprojected to the prediction lines' CRS on load.
+```bash
+python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch.gpkg --parcels inputs/gretna_parcels.gpkg --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --buffer-dist 3 --prediction-mask inputs/gretna_prediction_mask.gpkg
+```
 
 To compare two runs over the same chips (for example before and after a code change), evaluate both with `line_evaluate.py` and then run `compare_runs.py`. It reports precision, recall and F1 for each, how fragmented the lines are, whether line ends cluster at chip or chunk seams, and a spatial block bootstrap showing whether the difference is consistent across the area or down to chance.
 ```bash
 python unet/compare_runs.py --baseline outputs/predictions/<old>_boundaries.gpkg --candidate outputs/predictions/<new>_boundaries.gpkg --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --output-json outputs/predictions/compare.json
 ```
+
+For `run_pipeline.py` runs, the evaluations are named by buffer, so pass them with `--baseline-eval` and `--candidate-eval`. Use the report-buffer evaluations, `<run_id>_base_result_compare.gpkg` or `<run_id>_<fine_tuned_desc>_result_compare.gpkg`, not the `_base_filter_` one. For example, base against fine-tuned within one run:
 ```bash
-python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch.gpkg --parcels inputs/gretna_parcels.gpkg --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --buffer-dist 3 --prediction-mask inputs/gretna_prediction_mask.gpkg
+R=outputs/predictions/<run_id>
+python unet/compare_runs.py --baseline $R/<run_id>_base_boundaries.gpkg --baseline-eval $R/<run_id>_base_result_compare.gpkg --candidate $R/<run_id>_fine_tuned_boundaries.gpkg --candidate-eval $R/<run_id>_fine_tuned_result_compare.gpkg --chip-dir inputs/images/<area>/tiff_with_crs/chips
 ```
+Note that the pipeline deletes the chips when `preserve_intermediate_files` is false, and `compare_runs.py` needs `chips_index.gpkg` and one chip from `--chip-dir` to find the chip grid.
 
 ## 9. Stats per chip
 It is useful to see statistics per chip on lengths of prediction TP, FP, FN and these can be used to calculate precision and recall and then F1 scores per chip. 

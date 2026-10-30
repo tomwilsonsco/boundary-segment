@@ -21,8 +21,9 @@ def parse_arguments(args=None):
     """Set up and parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Compare a candidate prediction run against a baseline run. "
-        "Both runs must have been evaluated with line_evaluate.py, which writes "
-        "the <prediction>_result_compare.gpkg used here."
+        "Both runs must have been evaluated with line_evaluate.py. Its TP/FP/FN "
+        "lines are read from <prediction>_result_compare.gpkg unless "
+        "--baseline-eval / --candidate-eval give the path."
     )
     parser.add_argument(
         "--baseline",
@@ -35,6 +36,23 @@ def parse_arguments(args=None):
         type=Path,
         required=True,
         help="Candidate prediction lines GPKG (output of predict.py).",
+    )
+    parser.add_argument(
+        "--baseline-eval",
+        type=Path,
+        default=None,
+        help="TP/FP/FN lines GPKG from line_evaluate.py for the baseline. Needed for "
+        "run_pipeline.py runs, which name evaluations by buffer: use "
+        "<run_id>_base_result_compare.gpkg or <run_id>_<desc>_result_compare.gpkg "
+        "(report buffer), not <run_id>_base_filter_result_compare.gpkg. Default: "
+        "<baseline stem>_result_compare.gpkg next to the baseline.",
+    )
+    parser.add_argument(
+        "--candidate-eval",
+        type=Path,
+        default=None,
+        help="As --baseline-eval, for the candidate. Compare evaluations made at the "
+        "same buffer distance.",
     )
     parser.add_argument(
         "--chip-dir",
@@ -237,13 +255,17 @@ def block_bootstrap(base_blocks, cand_blocks, min_length, n_boot, seed=0):
 
 def main(args):
     """Compare the two runs and log a summary."""
-    for path in (args.baseline, args.candidate):
+    eval_paths = {
+        "baseline": args.baseline_eval or result_compare_path(args.baseline),
+        "candidate": args.candidate_eval or result_compare_path(args.candidate),
+    }
+    for name, path in (("baseline", args.baseline), ("candidate", args.candidate)):
         if not path.exists():
             raise FileNotFoundError(f"Prediction GPKG not found: {path}")
-        if not result_compare_path(path).exists():
+        if not eval_paths[name].exists():
             raise FileNotFoundError(
-                f"{result_compare_path(path)} not found. Run line_evaluate.py on "
-                f"{path} first."
+                f"{eval_paths[name]} not found. Run line_evaluate.py on {path} first, "
+                f"or pass --{name}-eval."
             )
 
     left, top, chip_step, pixel_size = chip_grid(args.chip_dir)
@@ -260,9 +282,10 @@ def main(args):
     blocks = {}
     for name, pred_path in (("baseline", args.baseline), ("candidate", args.candidate)):
         logging.info(f"Measuring {name}: {pred_path.name}...")
-        compare_gdf = gpd.read_file(result_compare_path(pred_path))
+        compare_gdf = gpd.read_file(eval_paths[name])
         results[name] = {
             "prediction": str(pred_path),
+            "evaluation": str(eval_paths[name]),
             "metrics": line_metrics(compare_gdf),
             "geometry": line_geometry_stats(
                 gpd.read_file(pred_path), (left, top), periods

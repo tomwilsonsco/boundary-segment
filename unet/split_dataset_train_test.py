@@ -85,17 +85,15 @@ def main(args):
     ignore_csv_path = args.chip_dir / "chips_ignore.csv"
     if ignore_csv_path.exists():
         logging.info(f"Found ignore list at: {ignore_csv_path}")
-        try:
-            ignore_df = pd.read_csv(ignore_csv_path)
-            if "file_name" in ignore_df.columns:
-                ignore_list = ignore_df["file_name"].tolist()
-                logging.info(f"Excluding {len(ignore_list)} chips from the dataset.")
-            else:
-                logging.warning(
-                    "chips_ignore.csv found, but 'file_name' column is missing. No chips will be excluded."
-                )
-        except Exception as e:
-            logging.error(f"Failed to read or process {ignore_csv_path}: {e}")
+        # an ignore list that exists but cannot be used must stop the split:
+        # carrying on would put filtered and outside-mask chips into training
+        ignore_df = pd.read_csv(ignore_csv_path)
+        if "file_name" not in ignore_df.columns:
+            raise ValueError(
+                f"{ignore_csv_path} has no 'file_name' column, so no chips can be excluded."
+            )
+        ignore_list = ignore_df["file_name"].tolist()
+        logging.info(f"Excluding {len(ignore_list)} chips from the dataset.")
 
     splitter = DatasetSplitter(
         image_dir=args.chip_dir,

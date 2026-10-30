@@ -475,14 +475,41 @@ def predict_chips(
     return output_files
 
 
+def _build_vrt_file(vrt_path, input_files):
+    """
+    Build one VRT and raise if GDAL fails. Without GDAL exceptions turned on,
+    BuildVRT returns None on a total failure, and an input it cannot read is
+    skipped with only an error message, leaving a hole in the mosaic. Both are
+    caught here by recording GDAL errors during the build.
+    """
+    errors = []
+
+    def record_errors(err_class, err_no, msg):
+        if err_class >= gdal.CE_Failure:
+            errors.append(msg)
+
+    options = gdal.BuildVRTOptions(
+        resampleAlg=gdal.GRA_NearestNeighbour, resolution="highest"
+    )
+    gdal.PushErrorHandler(record_errors)
+    try:
+        ds = gdal.BuildVRT(
+            str(vrt_path), [str(f) for f in input_files], options=options
+        )
+        built = ds is not None
+        # closing writes the VRT to disk, so a write failure is caught here too
+        ds = None
+    finally:
+        gdal.PopErrorHandler()
+    if not built or errors:
+        detail = "; ".join(errors[:5]) or gdal.GetLastErrorMsg()
+        raise RuntimeError(f"GDAL could not build {vrt_path} completely: {detail}")
+
+
 def _build_vrt_worker(args):
     vrt_path, input_files = args
     try:
-        options = gdal.BuildVRTOptions(
-            resampleAlg=gdal.GRA_NearestNeighbour, resolution="highest"
-        )
-        input_strs = [str(f) for f in input_files]
-        gdal.BuildVRT(str(vrt_path), input_strs, options=options)
+        _build_vrt_file(vrt_path, input_files)
         return str(vrt_path)
     except Exception as e:
         logging.error(f"Worker VRT error: {e}")
@@ -490,16 +517,12 @@ def _build_vrt_worker(args):
 
 
 def build_vrt(vrt_path, input_files):
-    """Build a VRT from a list of input files."""
+    """Build a VRT from a list of input files. Returns False if any part fails."""
     logging.info(f"Building VRT from {len(input_files)} files...")
 
     if len(input_files) < 2000:
         try:
-            options = gdal.BuildVRTOptions(
-                resampleAlg=gdal.GRA_NearestNeighbour, resolution="highest"
-            )
-            input_strs = [str(f) for f in input_files]
-            gdal.BuildVRT(str(vrt_path), input_strs, options=options)
+            _build_vrt_file(vrt_path, input_files)
             return True
         except Exception as e:
             logging.error(f"Error building VRT: {e}")
@@ -531,11 +554,16 @@ def build_vrt(vrt_path, input_files):
                 if res:
                     intermediate_vrts.append(res)
 
+        # a missing chunk would leave a hole in the mosaic and silently no lines there
+        if len(intermediate_vrts) != len(worker_args):
+            logging.error(
+                f"{len(worker_args) - len(intermediate_vrts)} of {len(worker_args)} "
+                "intermediate VRTs failed; not building an incomplete mosaic."
+            )
+            return False
+
         logging.info("Merging intermediate VRTs into final mosaic...")
-        options = gdal.BuildVRTOptions(
-            resampleAlg=gdal.GRA_NearestNeighbour, resolution="highest"
-        )
-        gdal.BuildVRT(str(vrt_path), intermediate_vrts, options=options)
+        _build_vrt_file(vrt_path, intermediate_vrts)
 
         return True
     except Exception as e:
@@ -611,8 +639,13 @@ def trace_skeleton_paths(skeleton):
             current = nxt
 
     paths = []
-    # ends of open lines first, then whatever is left (closed loops)
-    ends = sorted(p for p in pixels if len(neighbours(p)) <= 1)
+    # ends of open lines first, then whatever is left (closed loops). An end is a
+    # pixel with one run of neighbours round it, not one neighbour: a line can end
+    # on a staircase step, where the last pixel touches two neighbours that also
+    # touch each other. Counting neighbours would miss that end and start the walk
+    # mid-line, splitting the line in two.
+    runs = crossing_number(skeleton)
+    ends = sorted(p for p in pixels if runs[p] <= 1)
     for start in ends + sorted(pixels):
         if start in visited:
             continue
