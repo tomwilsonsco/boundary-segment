@@ -212,9 +212,9 @@ python unet/compare_runs.py --baseline outputs/predictions/<old>_boundaries.gpkg
 For `run_pipeline.py` runs, the evaluations are named by buffer, so pass them with `--baseline-eval` and `--candidate-eval`. Use the report-buffer evaluations, `<run_id>_base_result_compare.gpkg` or `<run_id>_<fine_tuned_desc>_result_compare.gpkg`, not the `_base_filter_` one. For example, base against fine-tuned within one run:
 ```bash
 R=outputs/predictions/<run_id>
-python unet/compare_runs.py --baseline $R/<run_id>_base_boundaries.gpkg --baseline-eval $R/<run_id>_base_result_compare.gpkg --candidate $R/<run_id>_fine_tuned_boundaries.gpkg --candidate-eval $R/<run_id>_fine_tuned_result_compare.gpkg --chip-dir inputs/images/<area>/tiff_with_crs/chips
+python unet/compare_runs.py --baseline $R/<run_id>_base_boundaries.gpkg --baseline-eval $R/<run_id>_base_result_compare.gpkg --candidate $R/<run_id>_fine_tuned_boundaries.gpkg --candidate-eval $R/<run_id>_fine_tuned_result_compare.gpkg --chip-dir $R
 ```
-Note that the pipeline deletes the chips when `preserve_intermediate_files` is false, and `compare_runs.py` needs `chips_index.gpkg` and one chip from `--chip-dir` to find the chip grid.
+`--chip-dir` can be the run folder itself: it keeps `chips_index.gpkg` and `pipeline_config.yaml`, which is all `compare_runs.py` needs to find the chip grid, so runs can be compared after cleanup has deleted the chips.
 
 ## 9. Stats per chip
 It is useful to see statistics per chip on lengths of prediction TP, FP, FN and these can be used to calculate precision and recall and then F1 scores per chip. 
@@ -286,6 +286,7 @@ Each run writes to its own folder, `outputs/predictions/<run_id>/`, where `run_i
 | `*_result_compare.gpkg`, `metrics_*.json` | TP/FP/FN lines and metrics: base model at the filter buffer (`base_filter`, used for chip filtering) and at the report buffer (`base`), fine-tuned model at the report buffer |
 | `summary.json` | Run record: input files with checksums, models, chip counts by removal reason and split, and the three sets of metrics |
 | `pipeline_config.yaml`, `chips_ignore.csv`, `chips_index_metrics.gpkg` | The settings and the chip filter result, enough to rebuild this area's training set later |
+| `chips_index.gpkg` | Chip footprints, so `compare_runs.py` can be run on the folder after cleanup |
 | `*_loss.png` | Training and validation loss |
 
 The base model has never seen the area, so its report-buffer metrics are an out-of-sample score. The fine-tuned model is scored on the labels it was trained on, so its metrics are in-sample (see `docs/review_findings.md` 2.4).

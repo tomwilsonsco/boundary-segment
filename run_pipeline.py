@@ -366,6 +366,8 @@ def main():
     require_output(ignore_csv, "Step 10: Filter Training Chips")
     shutil.copy(ignore_csv, run_dir / "chips_ignore.csv")
     shutil.copy(chips_metrics_gpkg, run_dir / "chips_index_metrics.gpkg")
+    # the chip footprints let compare_runs.py measure seams after cleanup
+    shutil.copy(chips_index_gpkg, run_dir / "chips_index.gpkg")
 
     # ==========================================
     # Stage 4: Fine Prediction

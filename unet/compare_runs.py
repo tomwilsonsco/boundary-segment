@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import rasterio as rio
 import shapely
+import yaml
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -59,7 +60,9 @@ def parse_arguments(args=None):
         type=Path,
         required=True,
         help="Directory with the chip TIFFs and chips_index.gpkg, used to find the "
-        "chip grid that seam statistics are measured against.",
+        "chip grid that seam statistics are measured against. A run_pipeline.py run "
+        "folder also works (it keeps chips_index.gpkg and pipeline_config.yaml), so "
+        "runs can be compared after their chips have been cleaned up.",
     )
     parser.add_argument(
         "--chunk-size",
@@ -117,8 +120,21 @@ def chip_grid(chip_dir):
     chip_step = float(steps.min())
 
     first_chip = chip_dir / index_gdf["file_name"].iloc[0]
-    with rio.open(first_chip) as src:
-        pixel_size = src.res[0]
+    config_path = chip_dir / "pipeline_config.yaml"
+    if first_chip.exists():
+        with rio.open(first_chip) as src:
+            pixel_size = src.res[0]
+    elif config_path.exists():
+        # a run_pipeline.py run folder: the chips are deleted by cleanup, but the
+        # folder keeps chips_index.gpkg and the config with the chip size in pixels
+        with open(config_path) as f:
+            chip_px = yaml.safe_load(f)["parameters"]["chip_image"]["chip_size"]
+        widths = index_gdf.geometry.bounds["maxx"] - index_gdf.geometry.bounds["minx"]
+        pixel_size = float(widths.median()) / chip_px
+    else:
+        raise FileNotFoundError(
+            f"Cannot find the pixel size: neither {first_chip} nor {config_path} exists."
+        )
     return left, top, chip_step, pixel_size
 
 

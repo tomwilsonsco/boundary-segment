@@ -248,9 +248,11 @@ def infer_chip_grid(chip_files, num_threads=16):
 
     cols = np.round((xs - xs.min()) / (step_px * res)).astype(int)
     rows = np.round((ys.max() - ys) / (step_px * res)).astype(int)
-    on_grid = np.allclose(xs, xs.min() + cols * step_px * res, atol=res / 2) and (
-        np.allclose(ys, ys.max() - rows * step_px * res, atol=res / 2)
-    )
+    # rtol=0: the default relative tolerance scales with the size of the
+    # coordinates, which on British National Grid allows metres of error
+    on_grid = np.allclose(
+        xs, xs.min() + cols * step_px * res, rtol=0, atol=res / 2
+    ) and np.allclose(ys, ys.max() - rows * step_px * res, rtol=0, atol=res / 2)
     if not on_grid:
         logging.warning(
             "Chip origins are not on a regular grid; overlaps will not be resolved."
@@ -1093,8 +1095,11 @@ def main(args):
         mask_union = mask_gdf.union_all()
         if lines:
             gdf_lines = gpd.GeoDataFrame(geometry=lines, crs=crs)
-            # clip returns MultiLineStrings; explode back to single lines
+            # clip returns MultiLineStrings; explode back to single lines. A line
+            # that only touches the mask edge clips to a point, which keep_geom_type
+            # does not drop (the result is not mixed), so keep LineStrings explicitly
             gdf_lines = gpd.clip(gdf_lines, mask_union).explode(index_parts=False)
+            gdf_lines = gdf_lines[gdf_lines.geom_type == "LineString"]
             lines = list(gdf_lines.geometry)
             logging.info(
                 f"Clipped prediction lines to mask: {len(lines)} lines remaining."
