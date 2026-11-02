@@ -23,6 +23,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+import pyogrio
 import yaml
 
 # Configure basic logging
@@ -97,6 +98,41 @@ def ignore_reasons(ignore_csv: Path) -> dict:
     return dict(counts)
 
 
+def check_parcel_inputs(parcels_gpkg, prediction_mask, national_parcels) -> list:
+    """Work out which parcel inputs Stage 0 must create, or stop if it cannot.
+
+    An existing parcels or mask file is used as is and must contain features. A
+    missing one is created from the national dataset, which must then be found.
+
+    Returns:
+        The missing files, for Stage 0 to create (empty if none are missing).
+    """
+    missing = []
+    for path in (parcels_gpkg, prediction_mask):
+        if path is None:
+            continue
+        if not path.exists():
+            missing.append(path)
+        elif pyogrio.read_info(path)["features"] == 0:
+            logger.error(f"{path} contains no features. Delete it to rebuild it.")
+            sys.exit(1)
+
+    if missing and national_parcels is None:
+        logger.error(
+            f"Not found: {', '.join(map(str, missing))}. Set "
+            "data.national_parcels_dataset in the config to create them, or "
+            "supply them yourself."
+        )
+        sys.exit(1)
+    if missing and not national_parcels.exists():
+        logger.error(
+            f"Not found: {', '.join(map(str, missing))}, and the national parcels "
+            f"dataset needed to create them was not found either: {national_parcels}"
+        )
+        sys.exit(1)
+    return missing
+
+
 def evaluate_command(
     pred_gpkg,
     parcels_gpkg,
@@ -154,6 +190,10 @@ def main():
     mask_val = config["data"].get("prediction_mask_gpkg")
     prediction_mask = base_input / mask_val if mask_val else None
 
+    national_val = config["data"].get("national_parcels_dataset")
+    national_parcels = base_input / national_val if national_val else None
+    aerial_extent_gpkg = base_input / f"{area_name}_aerial_extent.gpkg"
+
     # Intermediate paths derived from the README directory structure
     tiff_crs_dir = raw_img_dir / "tiff_with_crs"
     vrt_path = tiff_crs_dir / "apgb_imgs.vrt"
@@ -192,10 +232,53 @@ def main():
     base_metrics_json = run_dir / "metrics_base.json"
     final_metrics_json = run_dir / "metrics_fine_tuned.json"
 
+    # check the parcel inputs before anything is written, so a bad config does
+    # not leave an empty run folder behind
+    parcels_to_create = check_parcel_inputs(
+        parcels_gpkg, prediction_mask, national_parcels
+    )
+
     run_dir.mkdir(parents=True, exist_ok=False)
     shutil.copy(args.config, run_dir / "pipeline_config.yaml")
     logger.info(f"Starting pipeline for area: {area_name}")
     logger.info(f"Run folder: {run_dir}")
+
+    # ==========================================
+    # Stage 0: Parcel Pre-processing
+    # Creates whichever of the area's parcels and prediction mask do not exist,
+    # from the national dataset. Existing files are used as they are, so earlier
+    # areas' hand-made inputs are kept.
+
+    if parcels_to_create:
+        p_pre = config["parameters"].get("preprocess_parcels", {})
+        cmd_step0 = [
+            PYTHON,
+            "utils/preprocess_parcels.py",
+            "--img-dir",
+            raw_img_dir,
+            "--national-parcels",
+            national_parcels,
+            "--output-extent",
+            aerial_extent_gpkg,
+        ]
+        if parcels_gpkg in parcels_to_create:
+            cmd_step0.extend(["--output-parcels", parcels_gpkg])
+        if prediction_mask in parcels_to_create:
+            cmd_step0.extend(["--output-mask", prediction_mask])
+        if "mask_threshold_ha" in p_pre:
+            cmd_step0.extend(["--mask-threshold-ha", p_pre["mask_threshold_ha"]])
+        if "mask_buffer" in p_pre:
+            cmd_step0.extend(["--mask-buffer", p_pre["mask_buffer"]])
+        if "crs" in config["parameters"].get("assign_crs", {}):
+            cmd_step0.extend(["--crs", config["parameters"]["assign_crs"]["crs"]])
+        step = "Step 0: Pre-process Parcels and Prediction Mask"
+        run_command(cmd_step0, step)
+        for path in parcels_to_create:
+            require_output(path, step)
+    else:
+        logger.info(
+            "Parcels and prediction mask already exist, skipping pre-processing"
+        )
 
     # ==========================================
     # Stage 1: Data Preparation (Steps 1–4)
@@ -482,6 +565,10 @@ def main():
                 file_record(prediction_mask) if prediction_mask else None
             ),
             "raw_image_dir": str(raw_img_dir),
+            "national_parcels_dataset": (
+                str(national_parcels) if national_parcels else None
+            ),
+            "created_by_preprocessing": [str(p) for p in parcels_to_create],
         },
         "models": {
             "base": str(base_model_path),

@@ -13,11 +13,18 @@ data:
   # path to the directory containing the APGB JPEG files
   raw_image_dir: "images/spey"
   
-  # existing land parcels geometry
+  # the area's land parcels. Used as is if the file exists, otherwise created
+  # by Stage 0 from national_parcels_dataset
   parcels_gpkg: "spey_parcels.gpkg"
   
-  # optional prediction mask geometry
+  # prediction mask. Used as is if the file exists, otherwise created by
+  # Stage 0 from national_parcels_dataset. Leave empty to run without a mask
   prediction_mask_gpkg: "spey_prediction_mask.gpkg"
+
+  # national land parcels dataset. Only needed when either file above does not
+  # exist yet; the run stops before starting if a file is missing and this is
+  # empty or not found
+  national_parcels_dataset: "master_dataset_parcels/shp_20260126.shp"
 
 models:
   # the pre-trained base model to use for initial predictions and fine-tuning
@@ -29,6 +36,12 @@ parameters:
   assign_crs:
     crs: "EPSG:27700" # epsg for British National Grid
     
+  preprocess_parcels:
+    # parcels smaller than this, measured before clipping, form the prediction mask
+    mask_threshold_ha: 50
+    # metres; buffer applied to the dissolved mask parcels
+    mask_buffer: 50
+
   chip_image:
     chip_size: 512
     chip_offset: 384

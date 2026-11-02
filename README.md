@@ -68,9 +68,12 @@ inputs/
 ├── images/
 │   └── <area_name>/
 │       └── 12.5cm Aerial Photo/   ← APGB JPEG files go here
+├── master_dataset_parcels/        ← national land parcels dataset (for Step 0)
 ├── <area_name>_parcels.gpkg       ← land parcel polygons
 └── <area_name>_prediction_mask.gpkg  ← optional prediction mask
 ```
+
+The parcels and prediction mask can be made from the national parcels dataset with Step 0, or supplied by hand.
 
 After running Steps 1–3 the `inputs/images/` tree will be populated with GeoTIFFs, a VRT, and chip files automatically.
 
@@ -89,6 +92,7 @@ The scripts generally should be run in the following order, as each step produce
 
 | Step | Script | Key input | Key output |
 |------|--------|-----------|------------|
+| 0 | `utils/preprocess_parcels.py` | JPEG images + national parcels | Parcels and prediction mask `.gpkg` clipped to the imagery |
 | 1 | `utils/assign_crs_to_images.py` | JPEG images + prediction mask (optional) | GeoTIFFs with CRS |
 | 2 | `utils/create_vrt.py` | GeoTIFFs | `.vrt` mosaic |
 | 3 | `utils/chip_image.py` | `.vrt` + prediction mask (optional) | Chip `.tif` files + `chips_index.gpkg` |
@@ -102,6 +106,16 @@ The scripts generally should be run in the following order, as each step produce
 
 After completing Step 10, re-run Step 5 with the updated `chips_ignore.csv` to produce a cleaner dataset before retraining the model and creating new predictions.
 
+
+## 0. Prepare parcels and prediction mask
+The parcels and prediction mask for an area are cut from the national land parcels dataset. The extent of the aerial photography is the union of the JPEG footprints, read from their world files (`.jgw`) in EPSG:27700. Parcels intersecting the extent are selected and clipped to it.
+
+The prediction mask is made from the same parcels before clipping, so the size test uses each parcel's full area. Parcels smaller than `--mask-threshold-ha` (default 50 ha) are dissolved, buffered by `--mask-buffer` (default 50 m) and clipped to the extent. This leaves out large upland parcels, which do not have boundaries suitable for prediction. The buffer keeps predictions made slightly beyond the mapped parcels, where the parcel mapping does not match the imagery exactly.
+```bash
+python utils/preprocess_parcels.py --img-dir inputs/images/invergordon --national-parcels inputs/master_dataset_parcels/shp_20260126.shp --output-parcels inputs/invergordon_parcels.gpkg --output-mask inputs/invergordon_prediction_mask.gpkg --output-extent inputs/invergordon_aerial_extent.gpkg
+```
+
+Give `--output-parcels`, `--output-mask` or both. Existing files are not replaced unless `--overwrite` is given.
 
 ## 1. Assign CRS and convert jpegs to geotiffs
 The APGB images do not have a CRS and arrive in jpeg format.
@@ -258,7 +272,7 @@ The following scripts are part of the repository but are not part of the main pi
 | `unet/delete_dataset_chips.py` | Deletes chips listed in `chips_ignore.csv` from an existing dataset directory. An alternative to re-running `split_dataset_train_test.py` after filtering. |
 
 # Running full pipeline
-A Python wrapper script, `run_pipeline.py`, runs the entire pipeline described above: Steps 1–10 including the iterative predict - local training filter - retrain. Configuration is read from a YAML file so you can adjust parameters without editing the script.
+A Python wrapper script, `run_pipeline.py`, runs the entire pipeline described above: Steps 0–10 including the iterative predict - local training filter - retrain. Configuration is read from a YAML file so you can adjust parameters without editing the script.
 
 In a terminal after `cd` to the repository run:
 
@@ -270,12 +284,23 @@ The `pipeline_config.yaml` file contains all configurable settings:
 
 | Section | Key parameters |
 |---------|----------------|
-| `data` | Area name, paths to raw images, parcels GPKG, and optional prediction mask |
+| `data` | Area name, paths to raw images, parcels GPKG, optional prediction mask, and optional national parcels dataset |
 | `models` | Path to the pre-trained base model and description tag for fine-tuning |
-| `parameters` | CRS, chip size/offset/resampling, filter and report buffer distances, filter thresholds, training hyperparameters including early-stop patience |
+| `parameters` | CRS, prediction mask area threshold and buffer, chip size/offset/resampling, filter and report buffer distances, filter thresholds, training hyperparameters including early-stop patience |
 | `pipeline_settings` | Whether to preserve intermediate files after completion |
 
 Edit `pipeline_config.yaml` for your area before running.
+
+The parcels and prediction mask named under `data` are handled as follows, before anything else runs:
+
+| Files under `data` | `national_parcels_dataset` | What happens |
+|---|---|---|
+| Both exist (or no mask is set) | Not needed | They are used as they are and Step 0 is skipped |
+| One or both missing | Set and found | Step 0 creates the missing ones, plus `inputs/<area>_aerial_extent.gpkg` |
+| One or both missing | Empty or not found | The run stops with an error naming the missing file |
+| A file exists but has no features | Any | The run stops with an error |
+
+To rebuild an area's parcels or mask, delete the file and run the pipeline again. Leave `prediction_mask_gpkg` empty to run without a mask.
 
 Each run writes to its own folder, `outputs/predictions/<run_id>/`, where `run_id` is `<timestamp>_<area>`. The fine-tuned model goes to `models/<run_id>_<fine_tuned_desc>_<arch>.pth`. The run folder is kept even when intermediate files are cleaned up, and holds:
 
