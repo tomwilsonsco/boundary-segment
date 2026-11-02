@@ -308,7 +308,7 @@ def main(args):
     pred_gdf = gpd.clip(pred_gdf, index_union)
 
     logging.info("Buffering parcel lines...")
-    parcel_buffers = parcel_lines.buffer(args.buffer_dist, resolution=4)
+    parcel_buffers = parcel_lines.buffer(args.buffer_dist, quad_segs=4)
 
     logging.info("Splitting prediction lines (True Positives / False Positives)...")
     tp_geoms, fp_geoms = split_by_local_union(pred_gdf.geometry, parcel_buffers, crs)
@@ -322,7 +322,7 @@ def main(args):
     simplified_pred_lines = exploded_preds.geometry.simplify(1.0)
 
     logging.info(f"Buffering prediction lines by {args.buffer_dist}...")
-    pred_buffers = simplified_pred_lines.buffer(args.buffer_dist, resolution=4)
+    pred_buffers = simplified_pred_lines.buffer(args.buffer_dist, quad_segs=4)
     logging.info("Evaluating ground truth lines for False Negatives (FN)...")
     _, fn_geoms = split_by_local_union(parcel_lines, pred_buffers, crs)
     fn_gdf = merge_lines(filter_lines(fn_geoms, crs, "FN"))

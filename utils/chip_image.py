@@ -191,39 +191,40 @@ def main(args):
                     f"Prediction mask geometry is empty after union: {mask_path}"
                 )
 
-        # Collect all ignore records
-        all_ignore_records = []
-
-        # Find polygons not entirely within the VRT extent (small buffer for floating point precision)
-        outside_mask = ~gdf.geometry.within(vrt_geom.buffer(0.001))
-        outside_chips = gdf[outside_mask]
-        if not outside_chips.empty:
-            all_ignore_records.extend(
-                {
-                    "file_name": row["file_name"],
-                    "remove_condition": "outside image bounds",
-                }
-                for _, row in outside_chips.iterrows()
-            )
-
-        # Filter by prediction mask (deleting non-intersecting chips from disk)
+        # Chips not entirely within the VRT extent (small buffer for floating
+        # point precision)
+        outside_bounds = ~gdf.geometry.within(vrt_geom.buffer(0.001))
         if mask_geom is not None:
-            # chips that exist on disk but do NOT intersect the mask
-            mask_filter = gdf.geometry.intersects(mask_geom)
-            chips_to_remove = gdf[~mask_filter]
+            in_mask = gdf.geometry.intersects(mask_geom)
+        else:
+            in_mask = pd.Series(True, index=gdf.index)
+
+        # chips outside the mask are deleted, so each chip is recorded once:
+        # under the mask if it was deleted, otherwise under the image bounds
+        chips_to_remove = gdf[~in_mask]
+        if not chips_to_remove.empty:
             logging.info(
                 f"Deleting {len(chips_to_remove)} chips outside the prediction mask..."
             )
             delete_files([out_dir / name for name in chips_to_remove["file_name"]])
-            all_ignore_records.extend(
-                {"file_name": name, "remove_condition": "outside prediction mask"}
-                for name in chips_to_remove["file_name"]
-            )
-            # Keep only chips that pass both filters for the index
-            keep_mask = mask_filter & ~outside_mask
-            gdf = gdf[keep_mask].copy()
-        else:
-            gdf = gdf[~outside_mask].copy()
+        ignore_df = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "file_name": gdf.loc[in_mask & outside_bounds, "file_name"],
+                        "remove_condition": "outside image bounds",
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "file_name": chips_to_remove["file_name"],
+                        "remove_condition": "outside prediction mask",
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+        gdf = gdf[in_mask & ~outside_bounds].copy()
 
         # Write filtered index
         if not gdf.empty:
@@ -232,13 +233,13 @@ def main(args):
             logging.warning("No chips remain after filtering; skipping index write.")
 
         # Write chips_ignore.csv (if any records exist)
-        if all_ignore_records:
-            ignore_df = pd.DataFrame(all_ignore_records)
+        if not ignore_df.empty:
             ignore_df.to_csv(out_dir / "chips_ignore.csv", index=False)
+            counts = ignore_df["remove_condition"].value_counts()
             logging.info(
-                f"Excluded {len(all_ignore_records)} chips: "
-                f"{sum(1 for r in all_ignore_records if r['remove_condition'] == 'outside image bounds')} outside image bounds, "
-                f"{sum(1 for r in all_ignore_records if r['remove_condition'] == 'outside prediction mask')} outside prediction mask."
+                f"Excluded {len(ignore_df)} chips: "
+                f"{counts.get('outside image bounds', 0)} outside image bounds, "
+                f"{counts.get('outside prediction mask', 0)} outside prediction mask."
             )
         else:
             logging.info("All chips are within the valid extent and mask.")

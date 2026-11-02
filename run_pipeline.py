@@ -16,10 +16,12 @@ import csv
 import hashlib
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -37,6 +39,10 @@ logger = logging.getLogger(__name__)
 # run every script with the interpreter running this wrapper, so conda / venv
 # environments do not pick up a different Python
 PYTHON = sys.executable
+
+# each delete on the mounted data drive waits on a round trip, so deleting in
+# parallel is several times quicker than shutil.rmtree
+DELETE_THREADS = 16
 
 
 def load_config(config_path: str) -> dict:
@@ -73,6 +79,14 @@ def require_output(path: Path, step_name: str) -> None:
     if not path.exists():
         logger.error(f"Step '{step_name}' did not produce expected output: {path}")
         sys.exit(1)
+
+
+def remove_tree(path: Path) -> None:
+    """Delete a folder and everything in it, deleting the files in parallel."""
+    files = [Path(root) / name for root, _, names in os.walk(path) for name in names]
+    with ThreadPoolExecutor(max_workers=DELETE_THREADS) as pool:
+        list(pool.map(lambda f: f.unlink(missing_ok=True), files))
+    shutil.rmtree(path)
 
 
 def file_record(path: Path) -> dict:
@@ -457,7 +471,7 @@ def main():
 
     # Remove the preliminary dataset split so the final split can recreate it
     if dataset_dir.exists():
-        shutil.rmtree(dataset_dir)
+        remove_tree(dataset_dir)
 
     # Step 5 (Final): Re-run dataset split now that chips_ignore.csv has been
     # updated by Step 10 — this produces the clean training dataset.
@@ -522,6 +536,8 @@ def main():
         chips_dir,
         "--model",
         fine_tuned_model_path,
+        "--num-workers",
+        8,
         "--output-dir",
         run_dir,
         "--output-gpkg",
@@ -612,7 +628,7 @@ def main():
         for p in paths_to_remove:
             if p.exists() and p.is_dir():
                 logger.info(f"Removing directory: {p}")
-                shutil.rmtree(p)
+                remove_tree(p)
 
         logger.info(f"Cleanup complete. Run outputs remain in {run_dir}")
     else:

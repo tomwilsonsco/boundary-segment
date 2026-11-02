@@ -252,7 +252,10 @@ def main(args):
             logging.info("\nBy Dataset Split:")
             splits = sorted(gdf["dataset_split"].unique())
             for split in splits:
-                split_gdf = gdf[gdf["dataset_split"] == split]
+                # chips outside the dataset ("NA") have no scores, so are skipped
+                split_gdf = gdf[gdf["dataset_split"] == split].dropna(
+                    subset=["precision", "recall"]
+                )
                 if not split_gdf.empty:
                     p, r, f1 = calculate_f1_from_mean_pr(split_gdf)
                     logging.info(f"  {split.upper()}:")

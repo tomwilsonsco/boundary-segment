@@ -15,6 +15,7 @@ import numpy as np
 import segmentation_models_pytorch as smp
 import torch
 from albumentations.pytorch import ToTensorV2
+from matplotlib.ticker import MaxNLocator
 from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
@@ -464,6 +465,10 @@ def main(args):
     train_losses = []
     val_losses = []
     model_saved = False
+    # when fine-tuning from a model's weights, its validation loss before any
+    # training, which the fine-tuned epochs then have to beat
+    start_val_loss = None
+    score_start = False
 
     # Resume from an existing checkpoint or model. An explicit --resume that
     # cannot be loaded is an error: falling back to ImageNet weights would
@@ -491,6 +496,7 @@ def main(args):
                 epochs_no_improve = checkpoint["epochs_no_improve"]
                 train_losses = checkpoint["train_losses"]
                 val_losses = checkpoint["val_losses"]
+                start_val_loss = checkpoint.get("start_val_loss")
                 logging.info(
                     f"Successfully loaded checkpoint from epoch {checkpoint['epoch']}"
                 )
@@ -506,12 +512,14 @@ def main(args):
                 logging.info(
                     "Optimizer, learning rate, and epochs will start from scratch.\n"
                 )
+                score_start = True
             else:
                 target_model.load_state_dict(strip_compile_prefix(checkpoint))
                 logging.info(
                     "Loaded model weights only (old format - no optimizer state)"
                 )
                 logging.warning("Optimizer will restart from scratch\n")
+                score_start = True
         except Exception as e:
             raise RuntimeError(f"Could not load checkpoint {args.resume}: {e}") from e
         if start_epoch >= args.epochs:
@@ -542,6 +550,50 @@ def main(args):
             f"Gradient accumulation enabled: {args.accum_steps} steps (effective batch size: {args.batch_size * args.accum_steps})"
         )
 
+    def compute_loss(logits, masks):
+        if args.loss_method == "bce_only":
+            return bce_only_loss(logits, masks)
+        return dice_loss(logits, masks) + secondary_loss(logits, masks)
+
+    def validate(desc):
+        """Mean validation loss of the model in its current state."""
+        model.eval()
+        val_loss = 0
+        val_loop = tqdm(val_loader, desc=desc)
+        with torch.no_grad():
+            for images, masks in val_loop:
+                images = images.to(DEVICE, non_blocking=True)
+                masks = masks.to(DEVICE, non_blocking=True)
+
+                # mixed precision validation
+                with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
+                    loss = compute_loss(model(images), masks)
+
+                val_loss += loss.item()
+                val_loop.set_postfix(loss=loss.item())
+        return val_loss / len(val_loader)
+
+    def save_model():
+        """Save the model weights and config for inference."""
+        inference_config = {
+            "state_dict": model.state_dict(),
+            "arch": args.arch,
+            "encoder": args.encoder,
+        }
+        torch.save(inference_config, model_save_path)
+
+    # When fine-tuning, score the starting weights first, so the first epoch has
+    # to improve on them and a model worse than the start is never saved. The
+    # starting weights are saved too, as the result if no epoch improves.
+    if score_start:
+        start_val_loss = validate("Starting model [Val]")
+        logging.info(f"Starting model validation loss: {start_val_loss:.4f}")
+        best_val_loss = start_val_loss
+        # the LR scheduler compares later epochs with the same starting point
+        scheduler.step(start_val_loss)
+        save_model()
+        model_saved = True
+
     logging.info(f"Early stopping patience: {args.early_stop_patience} epochs")
     for epoch in range(start_epoch, args.epochs):
 
@@ -557,11 +609,7 @@ def main(args):
             masks = masks.to(DEVICE, non_blocking=True)
 
             with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
-                logits = model(images)
-                if args.loss_method == "bce_only":
-                    loss = bce_only_loss(logits, masks)
-                else:
-                    loss = dice_loss(logits, masks) + secondary_loss(logits, masks)
+                loss = compute_loss(model(images), masks)
                 loss = loss / args.accum_steps
 
             scaler.scale(loss).backward()
@@ -578,27 +626,7 @@ def main(args):
 
         avg_train_loss = train_loss / len(train_loader)
 
-        model.eval()
-        val_loss = 0
-
-        val_loop = tqdm(val_loader, desc=f"Epoch {epoch+1}/{args.epochs} [Val]")
-        with torch.no_grad():
-            for images, masks in val_loop:
-                images = images.to(DEVICE, non_blocking=True)
-                masks = masks.to(DEVICE, non_blocking=True)
-
-                # mixed precision validation
-                with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
-                    logits = model(images)
-                    if args.loss_method == "bce_only":
-                        loss = bce_only_loss(logits, masks)
-                    else:
-                        loss = dice_loss(logits, masks) + secondary_loss(logits, masks)
-
-                val_loss += loss.item()
-                val_loop.set_postfix(loss=loss.item())
-
-        avg_val_loss = val_loss / len(val_loader)
+        avg_val_loss = validate(f"Epoch {epoch+1}/{args.epochs} [Val]")
 
         train_losses.append(avg_train_loss)
         val_losses.append(avg_val_loss)
@@ -627,19 +655,14 @@ def main(args):
                 "epochs_no_improve": epochs_no_improve,
                 "train_losses": train_losses,
                 "val_losses": val_losses,
+                "start_val_loss": start_val_loss,
                 "arch": args.arch,
                 "encoder": args.encoder,
                 "loss_method": args.loss_method,
                 "batch_size": args.batch_size,
             }
             torch.save(checkpoint, checkpoint_path)
-            # save model weights and config for inference
-            inference_config = {
-                "state_dict": model.state_dict(),
-                "arch": args.arch,
-                "encoder": args.encoder,
-            }
-            torch.save(inference_config, model_save_path)
+            save_model()
             model_saved = True
         else:
             epochs_no_improve += 1
@@ -653,6 +676,11 @@ def main(args):
         logging.info("-" * 30)
 
     logging.info(f"Training Complete. Best Validation Loss: {best_val_loss:.4f}")
+    if start_val_loss is not None and best_val_loss >= start_val_loss:
+        logging.warning(
+            "No epoch improved on the starting model's validation loss "
+            f"({start_val_loss:.4f}); the saved model is the starting model."
+        )
     if not model_saved:
         raise RuntimeError(
             f"No model was saved to {model_save_path}: validation loss never "
@@ -662,9 +690,20 @@ def main(args):
     # plot / save training curves
     logging.info(f"Saving training loss plot to {loss_plot_path}...")
     plt.figure(figsize=(10, 6))
-    epochs_range = range(1, len(train_losses) + 1)
+    epochs_range = list(range(1, len(train_losses) + 1))
     plt.plot(epochs_range, train_losses, "b-", label="Training Loss", linewidth=2)
-    plt.plot(epochs_range, val_losses, "r-", label="Validation Loss", linewidth=2)
+    if start_val_loss is not None:
+        # the starting model's score is plotted as epoch 0
+        plt.plot(
+            [0] + epochs_range,
+            [start_val_loss] + val_losses,
+            "r-",
+            label="Validation Loss",
+            linewidth=2,
+        )
+    else:
+        plt.plot(epochs_range, val_losses, "r-", label="Validation Loss", linewidth=2)
+    plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
     plt.xlabel("Epoch", fontsize=12)
     plt.ylabel("Loss", fontsize=12)
     plt.title("Training and Validation Loss", fontsize=14, fontweight="bold")

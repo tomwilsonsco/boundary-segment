@@ -5,6 +5,7 @@ import logging
 import multiprocessing
 import os
 import queue
+import re
 import shutil
 import sys
 import threading
@@ -203,6 +204,64 @@ def _read_chip_header(chip_path):
         return chip_path.name, None
 
 
+# rschip names chips <name>_<x>_<y>.tif, where x, y is the chip's pixel offset in
+# the source image
+CHIP_NAME = re.compile(r"_(\d+)_(\d+)\.tif$")
+
+
+def headers_from_names(chip_files, pool, sample_size=5):
+    """
+    Chip headers worked out from the chip file names, checked against real ones.
+
+    A chip's origin is a linear function of the pixel offset in its name, so only
+    the chips at each end of the x and y axes are read to fit it, plus a random
+    sample to check it. Opening every chip on the mounted data drive takes minutes.
+
+    Returns:
+        Dict of chip file name -> header, as from _read_chip_header, or None if the
+        names do not hold the offsets or do not match the chips' headers.
+    """
+    offsets = {}
+    for f in chip_files:
+        match = CHIP_NAME.search(f.name)
+        if match is None:
+            return None
+        offsets[f.name] = (int(match[1]), int(match[2]))
+    names = list(offsets)
+    x_off, y_off = (np.array(v) for v in zip(*offsets.values()))
+    if x_off.min() == x_off.max() or y_off.min() == y_off.max():
+        return None
+
+    ends = [names[i] for i in (x_off.argmin(), x_off.argmax())]
+    ends += [names[i] for i in (y_off.argmin(), y_off.argmax())]
+    rng = np.random.default_rng(0)
+    sample = set(ends) | set(rng.choice(names, min(sample_size, len(names)), False))
+    by_name = {f.name: f for f in chip_files}
+    real = dict(pool.map(_read_chip_header, [by_name[n] for n in sample]))
+    if any(v is None for v in real.values()):
+        return None
+    if len({v[2:] for v in real.values()}) > 1:
+        return None  # chips differ in size or resolution
+
+    # origin = a + b * offset, fitted from the chips at each end of the axis
+    x0, x1 = offsets[ends[0]][0], offsets[ends[1]][0]
+    y0, y1 = offsets[ends[2]][1], offsets[ends[3]][1]
+    bx = (real[ends[1]][0] - real[ends[0]][0]) / (x1 - x0)
+    by = (real[ends[3]][1] - real[ends[2]][1]) / (y1 - y0)
+    ax = real[ends[0]][0] - bx * x0
+    ay = real[ends[2]][1] - by * y0
+    rest = next(iter(real.values()))[2:]
+    headers = {
+        name: (ax + bx * x, ay + by * y, *rest) for name, (x, y) in offsets.items()
+    }
+
+    tolerance = rest[0] / 2
+    for name, header in real.items():
+        if not np.allclose(header[:2], headers[name][:2], rtol=0, atol=tolerance):
+            return None
+    return headers
+
+
 def infer_chip_grid(chip_files, num_threads=16):
     """
     Work out the regular grid the chips were cut on, from their origins.
@@ -213,8 +272,14 @@ def infer_chip_grid(chip_files, num_threads=16):
     """
     # suppress_stderr swaps a process-wide file descriptor, so it wraps the whole
     # pool rather than each thread
+    # logging also writes to file descriptor 2, so nothing is logged inside it
     with suppress_stderr(), ThreadPoolExecutor(max_workers=num_threads) as pool:
-        headers = dict(pool.map(_read_chip_header, chip_files))
+        headers = headers_from_names(chip_files, pool)
+        from_names = headers is not None
+        if not from_names:
+            headers = dict(pool.map(_read_chip_header, chip_files))
+    if not from_names:
+        logging.info("Chip names do not give their positions; read every chip.")
     headers = {k: v for k, v in headers.items() if v is not None}
     if len(headers) < 2:
         return None
