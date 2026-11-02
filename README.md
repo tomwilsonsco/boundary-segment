@@ -284,12 +284,18 @@ The `pipeline_config.yaml` file contains all configurable settings:
 
 | Section | Key parameters |
 |---------|----------------|
-| `data` | Area name, paths to raw images, parcels GPKG, optional prediction mask, and optional national parcels dataset |
+| `data` | Area name, paths to raw images, parcels GPKG, optional prediction mask, and the national parcels dataset used to create them if missing |
 | `models` | Path to the pre-trained base model and description tag for fine-tuning |
 | `parameters` | CRS, prediction mask area threshold and buffer, chip size/offset/resampling, filter and report buffer distances, filter thresholds, training hyperparameters including early-stop patience |
 | `pipeline_settings` | Whether to preserve intermediate files after completion |
 
-Edit `pipeline_config.yaml` for your area before running.
+Edit `pipeline_config.yaml` for your area before running, or keep a separate configuration for each area: copy `pipeline_config.yaml`, edit the copy, and pass it with `--config`. Without `--config`, `pipeline_config.yaml` is used.
+
+```bash
+python run_pipeline.py --config pipeline_config_invergordon.yaml
+```
+
+A copy of the configuration used is saved in each run folder.
 
 The parcels and prediction mask named under `data` are handled as follows, before anything else runs:
 
