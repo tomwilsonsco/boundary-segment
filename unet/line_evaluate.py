@@ -185,7 +185,11 @@ def main(args):
     logging.info(f"Filtering parcels by area <= {args.max_parcel_area}...")
     parcels_gdf = parcels_gdf[parcels_gdf.geometry.area <= args.max_parcel_area]
 
-    # Clip parcels to prediction mask (if provided)
+    # Clip parcels to prediction mask (if provided). The clipped parcels only limit
+    # the prediction lines: the ground truth lines are clipped as lines below, as
+    # clipping a polygon would add its cut along the mask edge as a boundary
+    mask_union = None
+    clip_parcels_gdf = parcels_gdf
     if args.prediction_mask is not None:
         if crs is None:
             raise ValueError(
@@ -199,17 +203,18 @@ def main(args):
             raise ValueError(f"Prediction mask contains no features: {mask_path}")
         mask_gdf = mask_gdf.to_crs(crs)
         mask_union = mask_gdf.union_all()
-        parcels_gdf = gpd.clip(parcels_gdf, mask_union)
+        clip_parcels_gdf = gpd.clip(parcels_gdf, mask_union)
+        parcels_gdf = parcels_gdf[parcels_gdf.intersects(mask_union)]
         logging.info(
             f"Clipped parcels to prediction mask: {len(parcels_gdf)} parcels remaining."
         )
 
     logging.info("Clipping prediction lines by area filtered parcels...")
-    if parcels_gdf.empty:
+    if clip_parcels_gdf.empty:
         pred_gdf = pred_gdf.iloc[0:0].copy()
     else:
         # buffer parcels by 10 specifically for the clipping process
-        clip_parcel_list = list(parcels_gdf.geometry.buffer(10))
+        clip_parcel_list = list(clip_parcels_gdf.geometry.buffer(10))
         tree = STRtree(clip_parcel_list)
 
         clipped_geoms = []
@@ -290,6 +295,13 @@ def main(args):
     logging.info("Clipping boundary lines by chips index...")
     parcel_lines_gdf = gpd.GeoDataFrame(geometry=parcel_lines, crs=crs)
     parcel_lines_gdf = gpd.clip(parcel_lines_gdf, index_union)
+    if mask_union is not None:
+        logging.info("Clipping boundary lines by prediction mask...")
+        parcel_lines_gdf = gpd.clip(parcel_lines_gdf, mask_union)
+        parcel_lines_gdf = parcel_lines_gdf.explode(index_parts=False)
+        parcel_lines_gdf = parcel_lines_gdf[
+            parcel_lines_gdf.geom_type == "LineString"
+        ].reset_index(drop=True)
 
     logging.info(
         "Removing parcel lines near the external boundary of the study area..."

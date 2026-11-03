@@ -5,7 +5,7 @@ Predict land parcel boundaries using high resolution aerial photography and segm
 # Setup
 This process uses open source geospatial packages and PyTorch. Use of a GPU is recommended for training the models and making predictions. 
 
-**Note:** Full details on setup and the code is outlined below. A Word document was created with internal guidance. Please review that for a quicker start.
+**Note:** Full details on setup and the code is outlined below. A Word document with internal guidance, `Boundary_prediction_process.docx`, gives a quicker start. It is internal, so it may not be in your copy of the repository.
 
 ## Using Docker
 You can optionally use the Docker setup used during development of this process. This is found under `/.devcontainer`. 
@@ -23,10 +23,10 @@ docker run --gpus all -it --rm -v $(pwd):/app boundary-segment
 docker run --gpus all -it --rm -v "${PWD}":/app boundary-segment
 ```
 
-If you use VS Code and Docker a devcontainer.json is included in under `/.devcontainer`. In this case you do not need to run the docker commands above, just open the repository in VS Code and under Command Palette use Devcontainer: Reopen in container.
+If you use VS Code and Docker a devcontainer.json is included under `/.devcontainer`. In this case you do not need to run the docker commands above, just open the repository in VS Code and under Command Palette use Devcontainer: Reopen in container.
 
 ## Without Docker
-The `requirements.txt` can be used to install the packages needed, if not on Windows.
+The `requirements.txt` can be used to install the packages needed, if not on Windows. It pins the versions the pipeline was last run with (Python 3.11). `gdal` is not pinned, as it must match the GDAL library on your system.
 
 **For Windows users** as the process uses GDAL, you will probably find it easier to install the geospatial packages with Conda. 
 
@@ -35,7 +35,7 @@ The `requirements.txt` can be used to install the packages needed, if not on Win
 
 ```bash
 # create conda geo_env and install gdal etc
-conda create -n geo_env python=3.12 pip gdal rasterio geopandas shapely -c conda-forge
+conda create -n geo_env python=3.11 pip gdal rasterio geopandas shapely -c conda-forge
 # activate the new env
 conda activate geo_env
 ```
@@ -43,10 +43,11 @@ conda activate geo_env
 2. With the `geo_env` environment active, pip install the remaining packages into the conda python home.
 ```bash
 # install torch
-python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+python -m pip install torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu126
 
 # install other packages, e.g. rschip not on conda-forge
-python -m pip install rschip segmentation-models-pytorch albumentations opencv-python-headless pytest black flake8 tqdm scikit-learn scikit-image matplotlib pandas scipy ipykernel pyyaml
+# (see requirements.txt for the versions last used)
+python -m pip install rschip segmentation-models-pytorch albumentations opencv-python-headless pytest black ruff flake8 tqdm scikit-learn scikit-image matplotlib pandas scipy ipykernel pyyaml
 ```
 
 # Training a segmentation model
@@ -66,8 +67,7 @@ python path/name_of_script.py --help
 ```
 inputs/
 ├── images/
-│   └── <area_name>/
-│       └── 12.5cm Aerial Photo/   ← APGB JPEG files go here
+│   └── <area_name>/               ← APGB JPEG files and world files (.jgw) go here
 ├── master_dataset_parcels/        ← national land parcels dataset (for Step 0)
 ├── <area_name>_parcels.gpkg       ← land parcel polygons
 └── <area_name>_prediction_mask.gpkg  ← optional prediction mask
@@ -106,6 +106,8 @@ The scripts generally should be run in the following order, as each step produce
 
 After completing Step 10, re-run Step 5 with the updated `chips_ignore.csv` to produce a cleaner dataset before retraining the model and creating new predictions.
 
+`run_pipeline.py` runs the steps in this order: 0 to 5, 7 with the base model, 8 to 10, 5 again, 6, then 7 with the fine-tuned model and a final evaluation. The first pass skips Step 6, because the base model is already trained. The first Step 5 is a preliminary split: it finds the background-only chips and records which split each chip is in, both of which Step 9 needs. The split is rebuilt after Step 10 has updated `chips_ignore.csv`.
+
 
 ## 0. Prepare parcels and prediction mask
 The parcels and prediction mask for an area are cut from the national land parcels dataset. The extent of the aerial photography is the union of the JPEG footprints, read from their world files (`.jgw`) in EPSG:27700. Parcels intersecting the extent are selected and clipped to it.
@@ -120,18 +122,18 @@ Give `--output-parcels`, `--output-mask` or both. Existing files are not replace
 ## 1. Assign CRS and convert jpegs to geotiffs
 The APGB images do not have a CRS and arrive in jpeg format.
 ```bash
-python utils/assign_crs_to_images.py --img-dir "inputs/images/gretna/12.5cm Aerial Photo"
+python utils/assign_crs_to_images.py --img-dir inputs/images/gretna
 ```
 
 When the optional `--prediction-mask` argument is provided, only GeoTIFFs whose bounding box intersects the mask are written. The mask is reprojected to the target CRS (`--crs`, default EPSG:27700) on load.
 ```bash
-python utils/assign_crs_to_images.py --img-dir "inputs/images/gretna/12.5cm Aerial Photo" --prediction-mask inputs/gretna_prediction_mask.gpkg
+python utils/assign_crs_to_images.py --img-dir inputs/images/gretna --prediction-mask inputs/gretna_prediction_mask.gpkg
 ```
 
 ## 2. Create a GDAL vrt from the images
 A GDAL vrt is an XML reference file. It is much quicker to build and takes less disk space than building a mosaic image.
 ```bash
-python utils/create_vrt.py --img-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs"
+python utils/create_vrt.py --img-dir inputs/images/gretna/tiff_with_crs
 ```
 
 ## 3. Create chip images from vrt
@@ -139,41 +141,40 @@ Uses the [rs-chip](https://github.com/tomwilsonsco/rs-chip) package.
 The progress bar may take a while to update from 0%, as it only advances once a full batch is complete. If unsure whether the script is running, check that .tif files are appearing in the output directory.
 
 ```bash
-python utils/chip_image.py --vrt "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/apgb_imgs.vrt" --chip-size 512 --chip-offset 384 --resampling-factor 0.5
+python utils/chip_image.py --vrt inputs/images/gretna/tiff_with_crs/apgb_imgs.vrt --chip-size 512 --chip-offset 384 --resampling-factor 0.5
 ```
 
 The `--resampling-factor 0.5` is used in this example to downscale the chips at the point of creation from 0.125 m per pixel in the source imagery to 0.25 m, requiring 4 times fewer chips to cover a given extent. The output chip size (512 in this example) accounts for the downscaling and output chips will be 0.25 m per pixel and 512 by 512 pixels. 
 
 When the optional `--prediction-mask` argument is provided, chips that do not intersect the mask are deleted from disk and recorded in `chips_ignore.csv` with condition `outside prediction mask`. The mask is reprojected to the VRT's CRS on load.
 ```bash
-python utils/chip_image.py --vrt "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/apgb_imgs.vrt" --chip-size 512 --chip-offset 384 --resampling-factor 0.5 --prediction-mask inputs/gretna_prediction_mask.gpkg
+python utils/chip_image.py --vrt inputs/images/gretna/tiff_with_crs/apgb_imgs.vrt --chip-size 512 --chip-offset 384 --resampling-factor 0.5 --prediction-mask inputs/gretna_prediction_mask.gpkg
 ```
 
-Chips that are not entirely within the extent of the VRT are recorded in a chips_ignore.csv in the chips directory. This is used to exclude them from inclusion in training dataset. This csv is added to during [3. Chip images from vrt](#3-chip-images-from-vrt), [5. Split images and masks](#5-create-dataset-for-train-validation-test) and [10. Filtering Chips](#10-filter-training-chips).
+Chips that are not entirely within the imagery are recorded in `chips_ignore.csv` in the chips directory, with condition `outside image bounds`. The imagery is the area covered by the VRT's source tiles, not the VRT's bounding rectangle, so chips are also caught where the tiles form an irregular block. They stay on disk, so they are still predicted, but they are left out of the training dataset. A chip that is outside both the VRT extent and the mask is recorded once, as `outside prediction mask`. The csv is added to again in [10. Filter training chips](#10-filter-training-chips).
 
 ## 4. Create masks from land parcel lines
 This will create an equivalent binary mask tif (1 for lines 0 for background) for each input image.
 ```bash
-python unet/create_masks.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --parcels inputs/gretna_parcels.gpkg
+python unet/create_masks.py --chip-dir inputs/images/gretna/tiff_with_crs/chips --parcels inputs/gretna_parcels.gpkg
 ```
 ## 5. Create dataset for train, validation, test
-Background-only chips (where the mask contains no boundary pixels) are automatically excluded from the dataset and recorded in `chips_ignore.csv` in the chips directory. This file accumulates exclusions across multiple steps — see [10. Filter Training Chips](#10-filter-training-chips).
+Chips listed in `chips_ignore.csv` are left out of the dataset. Background-only chips (where the mask contains no boundary pixels) are also left out, unless `--no-filter-background-only` is given. They are not added to `chips_ignore.csv`: the check is recorded in `masks/background_only_check.csv`, which Step 9 also reads.
 
 > **`chips_ignore.csv` - what is recorded**
 >
 > | Added by | Condition recorded |
 > |---|---|
-> | Step 3 (`chip_image.py`) | Chip falls outside the VRT extent |
-> | Step 3 (`chip_image.py`) | Chip falls outside the prediction mask |
-> | Step 5 (`split_dataset_train_test.py`) | Chip mask is background-only |
+> | Step 3 (`chip_image.py`) | `outside image bounds`: chip falls partly outside the imagery |
+> | Step 3 (`chip_image.py`) | `outside prediction mask`: chip does not intersect the mask (deleted from disk) |
 > | Step 10 (`filter_training_chips.py`) | Corner clipper, invisible boundary, or extra boundary |
 >
 > `split_dataset_train_test.py` reads this file and excludes all listed chips.
-> `filter_training_chips.py` preserves existing `outside image bounds`,
-> `outside prediction mask`, and `outside training` entries when it writes new ones.
+> `filter_training_chips.py` keeps the Step 3 entries and replaces any earlier
+> Step 10 entries when it writes new ones.
 
 ```bash
-python unet/split_dataset_train_test.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/masks" --output-dir inputs/images/gretna
+python unet/split_dataset_train_test.py --chip-dir inputs/images/gretna/tiff_with_crs/chips --mask-dir inputs/images/gretna/tiff_with_crs/chips/masks --output-dir inputs/images/gretna
 ```
 
 ## 6. Train model
@@ -192,12 +193,12 @@ Once a trained model is achieving test set prediction performance you are happy 
 This process takes a while to complete on large extents.
 
 ```bash
-python unet/predict.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips"
+python unet/predict.py --chip-dir inputs/images/gretna/tiff_with_crs/chips
 ```
 
 When the optional `--prediction-mask` argument is provided, the output prediction lines are clipped to the mask before saving. The mask is reprojected to the prediction lines' CRS on load.
 ```bash
-python unet/predict.py --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --prediction-mask inputs/gretna_prediction_mask.gpkg
+python unet/predict.py --chip-dir inputs/images/gretna/tiff_with_crs/chips --prediction-mask inputs/gretna_prediction_mask.gpkg
 ```
 
 As with the evaluate script, predict will use the latest trained model in `models/` unless the `--model` argument is used to specify a different one.
@@ -210,17 +211,17 @@ The model's aim is to predict visible boundary lines. In this evaluation a predi
 This script accounts for this by specifying a buffer distance (metres) and then calculates lengths of true positive (TP), false positive (FP), false negative (FN) prediction line segments. These are written into a new output line geometry layer.
 
 ```bash
-python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch.gpkg --parcels inputs/gretna_parcels.gpkg --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --buffer-dist 3
+python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch.gpkg --parcels inputs/gretna_parcels.gpkg --chip-dir inputs/images/gretna/tiff_with_crs/chips --buffer-dist 3
 ```
 
-When the optional `--prediction-mask` argument is provided, the ground truth parcel lines are clipped to the mask before evaluation. This ensures FN computation also respects the prediction mask boundary, preventing artificially high FN counts outside the area of interest. The mask is reprojected to the prediction lines' CRS on load.
+When the optional `--prediction-mask` argument is provided, the ground truth parcel lines are clipped to the mask before evaluation. This ensures FN computation also respects the prediction mask boundary, preventing artificially high FN counts outside the area of interest. The parcel boundaries are clipped as lines, so where the mask edge cuts through a parcel, the cut is not counted as a boundary. The mask is reprojected to the prediction lines' CRS on load.
 ```bash
-python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch.gpkg --parcels inputs/gretna_parcels.gpkg --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --buffer-dist 3 --prediction-mask inputs/gretna_prediction_mask.gpkg
+python unet/line_evaluate.py --pred-gpkg outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch.gpkg --parcels inputs/gretna_parcels.gpkg --chip-dir inputs/images/gretna/tiff_with_crs/chips --buffer-dist 3 --prediction-mask inputs/gretna_prediction_mask.gpkg
 ```
 
 To compare two runs over the same chips (for example before and after a code change), evaluate both with `line_evaluate.py` and then run `compare_runs.py`. It reports precision, recall and F1 for each, how fragmented the lines are, whether line ends cluster at chip or chunk seams, and a spatial block bootstrap showing whether the difference is consistent across the area or down to chance.
 ```bash
-python unet/compare_runs.py --baseline outputs/predictions/<old>_boundaries.gpkg --candidate outputs/predictions/<new>_boundaries.gpkg --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --output-json outputs/predictions/compare.json
+python unet/compare_runs.py --baseline outputs/predictions/<old>_boundaries.gpkg --candidate outputs/predictions/<new>_boundaries.gpkg --chip-dir inputs/images/gretna/tiff_with_crs/chips --output-json outputs/predictions/compare.json
 ```
 
 For `run_pipeline.py` runs, the evaluations are named by buffer, so pass them with `--baseline-eval` and `--candidate-eval`. Use the report-buffer evaluations, `<run_id>_base_result_compare.gpkg` or `<run_id>_<fine_tuned_desc>_result_compare.gpkg`, not the `_base_filter_` one. For example, base against fine-tuned within one run:
@@ -238,7 +239,7 @@ This can be used to rank chips and review ones with a low F1 to discern chips wi
 The `unet/chip_metrics.py` process adds these stats per chip to a copy of the index layer.
 
 ```bash
-python unet/chip_metrics.py --line-comparison outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch_result_compare.gpkg --mask-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/masks" --chips-index "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index.gpkg" --dataset-dir inputs/images/gretna/dataset --output-gpkg "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index_metrics.gpkg"
+python unet/chip_metrics.py --line-comparison outputs/predictions/20260320_092233_20260319_215151_rgb025_unetplusplus_boundaries_50epoch_result_compare.gpkg --mask-dir inputs/images/gretna/tiff_with_crs/chips/masks --chips-index inputs/images/gretna/tiff_with_crs/chips/chips_index.gpkg --dataset-dir inputs/images/gretna/dataset --output-gpkg inputs/images/gretna/tiff_with_crs/chips/chips_index_metrics.gpkg
 ```
 
 ## 10. Filter training chips
@@ -247,10 +248,10 @@ To produce a good quality training dataset it can be useful to remove non-useful
 2. "Invisible boundary": Chips with low recall. This could be because the boundary is not visible on the image.
 3. "Extra boundary": Chips with low precision. This could be because the training data lines are out of date and new boundaries are seen on the image.
 
-`chips_ignore.csv` records all chips to exclude: those that fall outside the image extent (added in Step 3), background-only chips (added in Step 5), and low-quality chips identified here. Re-running Step 5 after this step will build a cleaner dataset that excludes all of these chips.
+`chips_ignore.csv` records all chips to exclude: those outside the image extent or the prediction mask (added in Step 3), and the low-quality chips identified here. Background-only chips are left out separately by Step 5. Re-running Step 5 after this step will build a cleaner dataset that excludes all of these chips.
 
 ```bash
-python unet/filter_training_chips.py --input-gpkg "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips/chips_index_metrics.gpkg" --chip-dir "inputs/images/gretna/12.5cm Aerial Photo/tiff_with_crs/chips" --min-training-length 30 --recall-min 0.5 --min-precision 0.5
+python unet/filter_training_chips.py --input-gpkg inputs/images/gretna/tiff_with_crs/chips/chips_index_metrics.gpkg --chip-dir inputs/images/gretna/tiff_with_crs/chips --min-training-length 30 --recall-min 0.5 --min-precision 0.5
 ```
 
 After running Steps 8–10, re-run **Step 5** to create a new, cleaner dataset that
@@ -324,5 +325,5 @@ The base model has never seen the area, so its report-buffer metrics are an out-
 
 `predict.py` overwrites existing chip predictions in `<output-dir>/temp_preds`. Pass `--reuse-existing` (with `--keep-preds` on the first run) to re-vectorise kept predictions, for example at a different `--threshold`, without running inference again.
 
-# Example prediciton
+# Example prediction
 ![Example plot](plots/apgb_imgs_8832_40320_analysis.png)

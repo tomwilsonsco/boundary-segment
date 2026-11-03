@@ -5,6 +5,7 @@ import logging
 import re
 import shutil
 import sys
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import rasterio as rio
 from rasterio.windows import Window
 from rasterio.windows import bounds as window_bounds
 from rschip import ImageChip
+from shapely import union_all
 from shapely.geometry import box
 
 # rschip names each chip <name>_<x>_<y>.tif, x and y being the top-left pixel of
@@ -24,6 +26,23 @@ CHIP_NAME = re.compile(r"_(\d+)_(\d+)\.tif$")
 # file operations on a mounted Windows drive spend their time waiting, so
 # deleting chips on several threads is much quicker than one at a time
 DELETE_THREADS = 16
+
+
+def image_footprint(vrt_path, vrt_transform):
+    """Area covered by the VRT's source images, from their positions in the VRT.
+
+    The VRT's own bounds are the rectangle round all its sources. Where the tiles
+    form an irregular block, that rectangle includes ground with no imagery.
+    """
+    band = ET.parse(vrt_path).getroot().find("VRTRasterBand")
+    tiles = []
+    for rect in band.iter("DstRect"):
+        x, y, w, h = (float(rect.get(k)) for k in ("xOff", "yOff", "xSize", "ySize"))
+        tiles.append(box(*window_bounds(Window(x, y, w, h), vrt_transform)))
+    if not tiles:
+        raise ValueError(f"No source images found in {vrt_path}")
+    # the buffer closes floating point slivers between neighbouring tiles
+    return union_all(tiles).buffer(0.01)
 
 
 def chip_index(chip_files, vrt_transform, read_dimensions, crs):
@@ -166,9 +185,9 @@ def main(args):
     chip_files = sorted(out_dir.glob("*.tif"))
     if chip_files:
         with rio.open(vrt_path) as vrt_src:
-            vrt_geom = box(*vrt_src.bounds)
             vrt_crs = vrt_src.crs
             vrt_transform = vrt_src.transform
+        vrt_geom = image_footprint(vrt_path, vrt_transform)
         logging.info(f"Building index layer for {len(chip_files)} chips...")
         gdf = chip_index(
             chip_files, vrt_transform, image_chipper.read_dimensions, vrt_crs
@@ -191,9 +210,8 @@ def main(args):
                     f"Prediction mask geometry is empty after union: {mask_path}"
                 )
 
-        # Chips not entirely within the VRT extent (small buffer for floating
-        # point precision)
-        outside_bounds = ~gdf.geometry.within(vrt_geom.buffer(0.001))
+        # Chips not entirely within the imagery, so partly nodata
+        outside_bounds = ~gdf.geometry.within(vrt_geom)
         if mask_geom is not None:
             in_mask = gdf.geometry.intersects(mask_geom)
         else:

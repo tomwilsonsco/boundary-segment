@@ -1,21 +1,29 @@
-numpy
-pandas
-rasterio
+# Versions used for the Invergordon run (2026-11-02), Python 3.11.
+# For a GPU, install torch first from the PyTorch index, e.g.
+#   pip install torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu126
+# gdal must match the system GDAL library (gdal-config --version), so it is not pinned.
+torch==2.9.1
+torchvision==0.24.1
+numpy==2.4.6
+pandas==3.1.0
+rasterio==1.4.4
 gdal
-scipy
-geopandas
-shapely
-black
-flake8
-ruff
-pytest
-matplotlib
-opencv-python-headless
-ipykernel
-scikit-learn
-tqdm
-rschip
-segmentation-models-pytorch
-albumentations
-scikit-image
-pyyaml
+scipy==1.17.1
+geopandas==1.2.0
+pyogrio==0.13.0
+shapely==2.2.0
+black==26.10.1
+flake8==7.4.1
+ruff==0.17.2
+pytest==9.1.1
+matplotlib==3.11.2
+opencv-python-headless==5.0.0.93
+ipykernel==7.4.0
+scikit-learn==1.9.1
+tqdm==4.67.1
+rschip==0.4.8
+segmentation-models-pytorch==0.5.0
+timm==1.0.30
+albumentations==2.0.8
+scikit-image==0.26.0
+pyyaml==6.0.3
