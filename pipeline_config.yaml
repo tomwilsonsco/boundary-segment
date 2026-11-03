@@ -62,7 +62,8 @@ parameters:
     arch: "unetplusplus"
     encoder: "efficientnet-b3"
     loss_method: "bce_dice"
-    epochs: 10 # see docs/review_findings.md 2.6 before raising this
+    epochs: 10 # tested: more epochs mostly fit boundaries the imagery cannot show,
+    # rather than improving the model
     # stop after this many epochs without validation improvement; above the LR
     # scheduler's patience (3) so a halved learning rate gets one epoch to help
     early_stop_patience: 4

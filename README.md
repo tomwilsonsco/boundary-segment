@@ -321,7 +321,7 @@ Each run writes to its own folder, `outputs/predictions/<run_id>/`, where `run_i
 | `chips_index.gpkg` | Chip footprints, so `compare_runs.py` can be run on the folder after cleanup |
 | `*_loss.png` | Training and validation loss |
 
-The base model has never seen the area, so its report-buffer metrics are an out-of-sample score. The fine-tuned model is scored on the labels it was trained on, so its metrics are in-sample (see `docs/review_findings.md` 2.4).
+The base model has never seen the area, so its report-buffer metrics are an out-of-sample score. The fine-tuned model is scored on the labels it was trained on, so its metrics are in-sample and somewhat optimistic. In a test, a model fine-tuned without seeing parts of the area scored about 0.02 F1 lower on those parts.
 
 `predict.py` overwrites existing chip predictions in `<output-dir>/temp_preds`. Pass `--reuse-existing` (with `--keep-preds` on the first run) to re-vectorise kept predictions, for example at a different `--threshold`, without running inference again.
 
