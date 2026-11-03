@@ -363,6 +363,11 @@ def main(args):
 
     logging.info(f"Using {num_workers} workers for data loading.")
 
+    # PyTorch rejects these options when loading in the main process (0 workers)
+    worker_options = (
+        {"persistent_workers": True, "prefetch_factor": 4} if num_workers > 0 else {}
+    )
+
     generator = torch.Generator()
     if args.seed is not None:
         generator.manual_seed(args.seed)
@@ -373,10 +378,9 @@ def main(args):
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
-        persistent_workers=True,
-        prefetch_factor=4,
         worker_init_fn=_seed_worker if args.seed is not None else None,
         generator=generator if args.seed is not None else None,
+        **worker_options,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -384,9 +388,8 @@ def main(args):
         shuffle=False,
         num_workers=num_workers,
         pin_memory=True,
-        persistent_workers=True,
-        prefetch_factor=4,
         worker_init_fn=_seed_worker if args.seed is not None else None,
+        **worker_options,
     )
 
     logging.info(
