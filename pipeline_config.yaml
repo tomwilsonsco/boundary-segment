@@ -24,7 +24,7 @@ data:
   # national land parcels dataset. Only needed when either file above does not
   # exist yet; the run stops before starting if a file is missing and this is
   # empty or not found
-  national_parcels_dataset: "master_dataset_parcels/shp_20260126.shp"
+  national_parcels_dataset: "master_dataset_parcels/shp_20261103.shp"
 
 models:
   # the pre-trained base model to use for initial predictions and fine-tuning
