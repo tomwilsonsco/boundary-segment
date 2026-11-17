@@ -917,6 +917,37 @@ def process_vrt_to_lines(
         return lines, crs
 
 
+def clip_lines_to_mask(lines, mask_geom, crs):
+    """
+    Clip lines to a mask polygon. Gives the same lines, in the same order, as
+    gpd.clip(lines, mask_geom) followed by exploding and keeping LineStrings.
+
+    gpd.clip intersects every line with the whole mask, which is slow for a
+    detailed mask (about 10 ms a line on Elgin's 159k-vertex mask, 14 minutes in
+    all). Nearly all lines lie inside the mask, and intersecting a line that lies
+    in the mask's interior returns it unchanged, so those are kept as they are and
+    only the lines that reach the mask edge are intersected.
+    """
+    gdf = gpd.GeoDataFrame(geometry=lines, crs=crs)
+    # the same candidate selection and order as gpd.clip
+    gdf = gdf.iloc[gdf.sindex.query(mask_geom, predicate="intersects")]
+    geoms = np.asarray(gdf.geometry.values, dtype=object)
+
+    # preparing the mask makes the containment test fast
+    shapely.prepare(mask_geom)
+    at_edge = ~shapely.contains_properly(mask_geom, geoms)
+    clipped = geoms.copy()
+    clipped[at_edge] = shapely.intersection(geoms[at_edge], mask_geom)
+    logging.info(
+        f"{at_edge.sum()} of {len(geoms)} lines reach the mask edge and were clipped"
+    )
+
+    # clip returns MultiLineStrings; explode back to single lines. A line that
+    # only touches the mask edge clips to a point, so keep LineStrings explicitly
+    out = gpd.GeoSeries(clipped, crs=crs).explode(index_parts=False)
+    return list(out[out.geom_type == "LineString"])
+
+
 def extend_line(line, distance=0.5):
     """
     Extends a Shapely LineString at both ends by a specified distance.
@@ -1159,13 +1190,7 @@ def main(args):
         mask_gdf = mask_gdf.to_crs(crs)
         mask_union = mask_gdf.union_all()
         if lines:
-            gdf_lines = gpd.GeoDataFrame(geometry=lines, crs=crs)
-            # clip returns MultiLineStrings; explode back to single lines. A line
-            # that only touches the mask edge clips to a point, which keep_geom_type
-            # does not drop (the result is not mixed), so keep LineStrings explicitly
-            gdf_lines = gpd.clip(gdf_lines, mask_union).explode(index_parts=False)
-            gdf_lines = gdf_lines[gdf_lines.geom_type == "LineString"]
-            lines = list(gdf_lines.geometry)
+            lines = clip_lines_to_mask(lines, mask_union, crs)
             logging.info(
                 f"Clipped prediction lines to mask: {len(lines)} lines remaining."
             )
