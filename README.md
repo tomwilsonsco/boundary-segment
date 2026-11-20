@@ -168,6 +168,7 @@ Chips listed in `chips_ignore.csv` are left out of the dataset. Background-only 
 > | Step 3 (`chip_image.py`) | `outside image bounds`: chip falls partly outside the imagery |
 > | Step 3 (`chip_image.py`) | `outside prediction mask`: chip does not intersect the mask (deleted from disk) |
 > | Step 10 (`filter_training_chips.py`) | Corner clipper, invisible boundary, or extra boundary |
+> | Step 10 (`filter_training_chips.py`, with `--max-dataset-chips`) | `sample_cap`: passed the filter but not in the random sample |
 >
 > `split_dataset_train_test.py` reads this file and excludes all listed chips.
 > `filter_training_chips.py` keeps the Step 3 entries and replaces any earlier
@@ -253,6 +254,8 @@ To produce a good quality training dataset it can be useful to remove non-useful
 ```bash
 python unet/filter_training_chips.py --input-gpkg inputs/images/gretna/tiff_with_crs/chips/chips_index_metrics.gpkg --chip-dir inputs/images/gretna/tiff_with_crs/chips --min-training-length 30 --recall-min 0.5 --min-precision 0.5
 ```
+
+For large areas, `--max-dataset-chips N` caps the chips passed to the split (train + val + test) at a seeded random sample of `N` of the chips that pass the filter (`--seed`, default 42). The rest are recorded as `sample_cap`. Sampling is random rather than by base-model fit, so the area's mix of landscapes and boundary types is kept. It needs `--mask-dir` for `background_only_check.csv`, so that the cap counts the same chips the split uses. Areas with fewer eligible chips than `N` are unchanged. In `run_pipeline.py` it is set by `filter_chips.max_dataset_chips` and `sample_seed`.
 
 After running Steps 8–10, re-run **Step 5** to create a new, cleaner dataset that
 excludes the chips added to `chips_ignore.csv`. Then re-run **Step 6** to train a

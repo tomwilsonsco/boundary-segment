@@ -57,6 +57,13 @@ parameters:
     min_training_length: 30
     recall_min: 0.5
     min_precision: 0.5
+    # optional cap on the chips passed to the dataset split (train+val+test), as a
+    # seeded random sample of the chips that pass the filter above. null = no cap.
+    # Speeds up training on large areas at a small cost on F1 score
+    # Areas with fewer eligible chips than the cap are unaffected.
+    max_dataset_chips: null
+    # random seed for the cap's sample, so a run's training set can be rebuilt
+    sample_seed: 42
     
   train:
     arch: "unetplusplus"

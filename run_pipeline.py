@@ -455,6 +455,20 @@ def main():
         "--min-precision",
         p_filter["min_precision"],
     ]
+    # optional random cap on the chips that pass the filter, for large areas
+    max_dataset_chips = p_filter.get("max_dataset_chips")
+    sample_seed = p_filter.get("sample_seed", 42)
+    if max_dataset_chips:
+        cmd_step10.extend(
+            [
+                "--max-dataset-chips",
+                max_dataset_chips,
+                "--mask-dir",
+                masks_dir,
+                "--seed",
+                sample_seed,
+            ]
+        )
     run_command(cmd_step10, "Step 10: Filter Training Chips")
 
     # keep the ignore list and chip metrics with the run: together with the
@@ -593,6 +607,8 @@ def main():
         "chips": {
             "ignored_by_reason": ignore_reasons(run_dir / "chips_ignore.csv"),
             "dataset": dataset_counts,
+            "max_dataset_chips": max_dataset_chips or None,
+            "sample_seed": sample_seed if max_dataset_chips else None,
         },
         "metrics": {
             "base_out_of_sample": json.loads(base_metrics_json.read_text()),
