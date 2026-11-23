@@ -291,7 +291,7 @@ python unet/parcel_review.py --line-comparison outputs/predictions/<run>/<predic
 | `flag` | `score` above 1 |
 | `main_signal` | Which signal gives the score: `missed edge` or `interior lines` |
 | `missed_edge_m`, `missed_frac` | Length and share of the parcel boundary that is FN: no predicted line within the buffer |
-| `offset_edge_m` | Part of the missed edge with a predicted line within 30 m (`--offset-dist`): a likely moved or mis-mapped boundary. Reported, not scored |
+| `offset_edge_m` | Part of the missed edge with an FP line within 30 m (`--offset-dist`): a likely moved or mis-mapped boundary. Reported, not scored |
 | `interior_m` | FP line inside the parcel, more than the buffer from its boundary: a possible new boundary |
 | `edge_m`, `area_ha`, `mask_frac` | Boundary length, area, and share of the area inside the prediction mask |
 | `scope` | `in scope`, `outside mask` (under 90% inside the mask, `--min-mask-frac`) or `too large` (over 50 ha, `--max-parcel-area`) |

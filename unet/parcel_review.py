@@ -8,9 +8,10 @@ score. One row per parcel, with two signals from the method review
 - interior lines: the length of FP line inside the parcel, more than --buffer-dist
   from its boundary.
 
-A third, offset edge, is the part of the missed edge that has a predicted line (TP or
-FP) within --offset-dist: a likely moved or mis-mapped boundary. It is reported, not
-scored.
+A third, offset edge, is the part of the missed edge that has an FP line within
+--offset-dist: a likely moved or mis-mapped boundary. It is reported, not scored. TP
+lines are not used: they lie on the mapped boundaries, so the TP edge next to a
+missed edge, or either side of a short gap, would count as an offset.
 
 The score is max(missed_frac / --missed-frac-flag, interior_m / --interior-m-flag),
 and a parcel is flagged when it is above 1. It is a ranking, not a probability: it has
@@ -89,7 +90,7 @@ def parse_arguments(args=None):
         "--offset-dist",
         type=float,
         default=30.0,
-        help="Metres; a missed edge with a predicted line within this distance is "
+        help="Metres; a missed edge with an FP line within this distance is "
         "counted as an offset edge. Default: 30.0.",
     )
     parser.add_argument(
@@ -140,17 +141,15 @@ def mask_fractions(geoms, mask_geom):
 
 
 class LineSets:
-    """FN, FP and predicted (TP + FP) lines, each with a spatial index."""
+    """FN and FP lines, each with a spatial index."""
 
     def __init__(self, comparison):
         result = comparison["pred_result"]
         geoms = comparison.geometry.values.to_numpy()
         self.fn = geoms[(result == "FN").to_numpy()]
         self.fp = geoms[(result == "FP").to_numpy()]
-        self.pred = geoms[result.isin(["TP", "FP"]).to_numpy()]
         self.fn_tree = shapely.STRtree(self.fn)
         self.fp_tree = shapely.STRtree(self.fp)
-        self.pred_tree = shapely.STRtree(self.pred)
 
 
 def length_within(geom, tree, distance, step=1.0):
@@ -191,7 +190,7 @@ def parcel_signals(parcel, lines, buffer_dist, offset_dist):
 
     offset_m = 0.0
     if missed_m > 0:
-        offset_m = min(length_within(missed, lines.pred_tree, offset_dist), missed_m)
+        offset_m = min(length_within(missed, lines.fp_tree, offset_dist), missed_m)
 
     interior_m = 0.0
     core = parcel.buffer(-buffer_dist)
@@ -330,10 +329,7 @@ def main(args):
     comparison = comparison.to_crs(crs)
     comparison = comparison[~comparison.geometry.is_empty & comparison.geometry.notna()]
     lines = LineSets(comparison)
-    logging.info(
-        f"{len(lines.fn)} FN, {len(lines.fp)} FP and {len(lines.pred)} predicted "
-        "(TP + FP) lines."
-    )
+    logging.info(f"{len(lines.fn)} FN and {len(lines.fp)} FP lines.")
 
     args.mask_geom = None
     if args.prediction_mask is not None:
