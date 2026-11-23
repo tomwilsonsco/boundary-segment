@@ -1,5 +1,7 @@
 pipeline_settings:
-  preserve_intermediate_files: false # if false, deletes all files except final predictions
+  # if false, deletes the GeoTIFFs, VRT, chips, masks and dataset split after the run.
+  # The run folder outputs/predictions/<run_id>/ and the model in models/ are always kept.
+  preserve_intermediate_files: false
 
 data:
   # the area name, to dynamically generate intermediate paths
@@ -11,11 +13,18 @@ data:
   # path to the directory containing the APGB JPEG files
   raw_image_dir: "images/spey"
   
-  # existing land parcels geometry
+  # the area's land parcels. Used as is if the file exists, otherwise created
+  # by Stage 0 from national_parcels_dataset
   parcels_gpkg: "spey_parcels.gpkg"
   
-  # optional prediction mask geometry
+  # prediction mask. Used as is if the file exists, otherwise created by
+  # Stage 0 from national_parcels_dataset. Leave empty to run without a mask
   prediction_mask_gpkg: "spey_prediction_mask.gpkg"
+
+  # national land parcels dataset. Only needed when either file above does not
+  # exist yet; the run stops before starting if a file is missing and this is
+  # empty or not found
+  national_parcels_dataset: "master_dataset_parcels/shp_20261103.shp"
 
 models:
   # the pre-trained base model to use for initial predictions and fine-tuning
@@ -27,23 +36,43 @@ parameters:
   assign_crs:
     crs: "EPSG:27700" # epsg for British National Grid
     
+  preprocess_parcels:
+    # parcels smaller than this, measured before clipping, form the prediction mask
+    mask_threshold_ha: 50
+    # metres; buffer applied to the dissolved mask parcels
+    mask_buffer: 50
+
   chip_image:
     chip_size: 512
     chip_offset: 384
     resampling_factor: 0.5
     
   line_evaluate:
-    buffer_dist: 3.0 # metres; maps to --buffer-dist in line_evaluate.py
+    # metres; the stricter buffer used to score chips for removal from training
+    filter_buffer_dist: 3.0
+    # metres; the business-rule buffer used for the metrics in each run's summary.json
+    report_buffer_dist: 8.0
     
   filter_chips:
     min_training_length: 30
     recall_min: 0.5
     min_precision: 0.5
+    # optional cap on the chips passed to the dataset split (train+val+test), as a
+    # seeded random sample of the chips that pass the filter above. null = no cap.
+    # Speeds up training on large areas at a small cost on F1 score
+    # Areas with fewer eligible chips than the cap are unaffected.
+    max_dataset_chips: null
+    # random seed for the cap's sample, so a run's training set can be rebuilt
+    sample_seed: 42
     
   train:
     arch: "unetplusplus"
     encoder: "efficientnet-b3"
     loss_method: "bce_dice"
-    epochs: 10 # might need more - keep check validation loss vs training loss
+    epochs: 10 # tested: more epochs mostly fit boundaries the imagery cannot show,
+    # rather than improving the model
+    # stop after this many epochs without validation improvement; above the LR
+    # scheduler's patience (3) so a halved learning rate gets one epoch to help
+    early_stop_patience: 4
     batch_size: 8
     lr: 0.00001 # 10% of LR default in train.py as fine tune

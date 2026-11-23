@@ -3,15 +3,30 @@ run_pipeline.py
 
 A wrapper script to run the full Land Parcel Boundary Segmentation pipeline.
 Reads configuration from a YAML file and executes the underlying tools.
+
+Each run writes its outputs to outputs/predictions/<run_id>/, where run_id is
+<timestamp>_<area>. That folder is kept by the cleanup step and holds what is
+needed to compare runs or to rebuild the area's training set later: both
+predictions, their evaluations, a copy of the config, the chip ignore list and
+chip metrics, the training loss plot and a summary.json.
 """
 
 import argparse
-import subprocess
-import yaml
-import sys
-import shutil
+import csv
+import hashlib
+import json
 import logging
+import os
+import shutil
+import subprocess
+import sys
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
+
+import pyogrio
+import yaml
 
 # Configure basic logging
 logging.basicConfig(
@@ -20,6 +35,14 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+# run every script with the interpreter running this wrapper, so conda / venv
+# environments do not pick up a different Python
+PYTHON = sys.executable
+
+# each delete on the mounted data drive waits on a round trip, so deleting in
+# parallel is several times quicker than shutil.rmtree
+DELETE_THREADS = 16
 
 
 def load_config(config_path: str) -> dict:
@@ -32,27 +55,127 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def run_command(cmd_list: list, step_name: str, stdin_input: str = None) -> None:
-    """Run a command via subprocess and handle errors.
+def run_command(cmd_list: list, step_name: str) -> None:
+    """Run a command via subprocess and stop the pipeline if it fails.
 
     Args:
         cmd_list:    Command and arguments to run.
         step_name:   Human-readable label used in log messages.
-        stdin_input: Optional string written to the process stdin. Used to
-                     automatically respond to interactive prompts (e.g. the
-                     overwrite prompt in predict.py) so the pipeline never
-                     blocks waiting for keyboard input.
     """
     cmd_str_list = [str(arg) for arg in cmd_list]
     logger.info(f"--- Running {step_name} ---")
     logger.debug(f"Command: {' '.join(cmd_str_list)}")
 
     try:
-        subprocess.run(cmd_str_list, check=True, text=True, input=stdin_input)
+        subprocess.run(cmd_str_list, check=True, text=True)
         logger.info(f"--- {step_name} completed successfully ---\n")
     except subprocess.CalledProcessError as e:
         logger.error(f"Step '{step_name}' failed with exit code {e.returncode}.")
         sys.exit(1)
+
+
+def require_output(path: Path, step_name: str) -> None:
+    """Stop the pipeline if a step did not write the file the next step needs."""
+    if not path.exists():
+        logger.error(f"Step '{step_name}' did not produce expected output: {path}")
+        sys.exit(1)
+
+
+def remove_tree(path: Path) -> None:
+    """Delete a folder and everything in it, deleting the files in parallel."""
+    files = [Path(root) / name for root, _, names in os.walk(path) for name in names]
+    with ThreadPoolExecutor(max_workers=DELETE_THREADS) as pool:
+        list(pool.map(lambda f: f.unlink(missing_ok=True), files))
+    shutil.rmtree(path)
+
+
+def file_record(path: Path) -> dict:
+    """Path, size and SHA-256 of an input file, so a run records which version it used."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    return {
+        "path": str(path),
+        "bytes": path.stat().st_size,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def ignore_reasons(ignore_csv: Path) -> dict:
+    """Count chips in chips_ignore.csv by removal reason (a chip can have several)."""
+    counts = Counter()
+    with open(ignore_csv, newline="") as f:
+        for row in csv.DictReader(f):
+            for reason in (row.get("remove_condition") or "").split(" | "):
+                counts[reason.strip() or "unspecified"] += 1
+    return dict(counts)
+
+
+def check_parcel_inputs(parcels_gpkg, prediction_mask, national_parcels) -> list:
+    """Work out which parcel inputs Stage 0 must create, or stop if it cannot.
+
+    An existing parcels or mask file is used as is and must contain features. A
+    missing one is created from the national dataset, which must then be found.
+
+    Returns:
+        The missing files, for Stage 0 to create (empty if none are missing).
+    """
+    missing = []
+    for path in (parcels_gpkg, prediction_mask):
+        if path is None:
+            continue
+        if not path.exists():
+            missing.append(path)
+        elif pyogrio.read_info(path)["features"] == 0:
+            logger.error(f"{path} contains no features. Delete it to rebuild it.")
+            sys.exit(1)
+
+    if missing and national_parcels is None:
+        logger.error(
+            f"Not found: {', '.join(map(str, missing))}. Set "
+            "data.national_parcels_dataset in the config to create them, or "
+            "supply them yourself."
+        )
+        sys.exit(1)
+    if missing and not national_parcels.exists():
+        logger.error(
+            f"Not found: {', '.join(map(str, missing))}, and the national parcels "
+            f"dataset needed to create them was not found either: {national_parcels}"
+        )
+        sys.exit(1)
+    return missing
+
+
+def evaluate_command(
+    pred_gpkg,
+    parcels_gpkg,
+    chips_dir,
+    buffer_dist,
+    output_gpkg,
+    metrics_json,
+    prediction_mask,
+):
+    """Build a line_evaluate.py command with explicit output paths."""
+    cmd = [
+        PYTHON,
+        "unet/line_evaluate.py",
+        "--pred-gpkg",
+        pred_gpkg,
+        "--parcels",
+        parcels_gpkg,
+        "--chip-dir",
+        chips_dir,
+        "--buffer-dist",
+        buffer_dist,
+        "--output-gpkg",
+        output_gpkg,
+        "--metrics-json",
+        metrics_json,
+    ]
+    if prediction_mask:
+        cmd.extend(["--prediction-mask", prediction_mask])
+    return cmd
 
 
 def main():
@@ -68,6 +191,7 @@ def main():
     args = parser.parse_args()
 
     config = load_config(args.config)
+    started = datetime.now()
 
     # ------------------------------------------------------------------
     # Resolve all paths up-front so every step has consistent references
@@ -80,6 +204,10 @@ def main():
     mask_val = config["data"].get("prediction_mask_gpkg")
     prediction_mask = base_input / mask_val if mask_val else None
 
+    national_val = config["data"].get("national_parcels_dataset")
+    national_parcels = base_input / national_val if national_val else None
+    aerial_extent_gpkg = base_input / f"{area_name}_aerial_extent.gpkg"
+
     # Intermediate paths derived from the README directory structure
     tiff_crs_dir = raw_img_dir / "tiff_with_crs"
     vrt_path = tiff_crs_dir / "apgb_imgs.vrt"
@@ -91,16 +219,87 @@ def main():
     chips_metrics_gpkg = chips_dir / "chips_index_metrics.gpkg"
 
     base_model_path = Path(config["models"]["base_model"])
-    predictions_dir = Path("outputs/predictions")
 
+    # Buffers: the filter buffer scores chips for removal from training; the
+    # report buffer is the business rule used for the metrics in summary.json.
+    # A config with the old single 'buffer_dist' key uses it as the filter buffer.
+    p_line_eval = config["parameters"].get("line_evaluate", {})
+    filter_buffer = p_line_eval.get(
+        "filter_buffer_dist", p_line_eval.get("buffer_dist", 3.0)
+    )
+    report_buffer = p_line_eval.get("report_buffer_dist", 8.0)
+
+    # Every file passed between steps is named here, up front, so no step has to
+    # guess which file the previous one wrote. All of a run's outputs except the
+    # model go in one run folder.
+    run_id = f"{started.strftime('%Y%m%d_%H%M%S')}_{area_name}"
+    run_dir = Path("outputs/predictions") / run_id
+    fine_tuned_desc = config["models"]["fine_tuned_desc"]
+    arch = config["parameters"]["train"]["arch"]
+    base_pred_gpkg = run_dir / f"{run_id}_base_boundaries.gpkg"
+    filter_eval_gpkg = run_dir / f"{run_id}_base_filter_result_compare.gpkg"
+    base_eval_gpkg = run_dir / f"{run_id}_base_result_compare.gpkg"
+    fine_tuned_model_path = Path("models") / f"{run_id}_{fine_tuned_desc}_{arch}.pth"
+    final_pred_gpkg = run_dir / f"{run_id}_{fine_tuned_desc}_boundaries.gpkg"
+    final_eval_gpkg = run_dir / f"{run_id}_{fine_tuned_desc}_result_compare.gpkg"
+    filter_metrics_json = run_dir / "metrics_base_filter.json"
+    base_metrics_json = run_dir / "metrics_base.json"
+    final_metrics_json = run_dir / "metrics_fine_tuned.json"
+
+    # check the parcel inputs before anything is written, so a bad config does
+    # not leave an empty run folder behind
+    parcels_to_create = check_parcel_inputs(
+        parcels_gpkg, prediction_mask, national_parcels
+    )
+
+    run_dir.mkdir(parents=True, exist_ok=False)
+    shutil.copy(args.config, run_dir / "pipeline_config.yaml")
     logger.info(f"Starting pipeline for area: {area_name}")
+    logger.info(f"Run folder: {run_dir}")
+
+    # ==========================================
+    # Stage 0: Parcel Pre-processing
+    # Creates whichever of the area's parcels and prediction mask do not exist,
+    # from the national dataset. Existing files are used as they are, so earlier
+    # areas' hand-made inputs are kept.
+
+    if parcels_to_create:
+        p_pre = config["parameters"].get("preprocess_parcels", {})
+        cmd_step0 = [
+            PYTHON,
+            "utils/preprocess_parcels.py",
+            "--img-dir",
+            raw_img_dir,
+            "--national-parcels",
+            national_parcels,
+            "--output-extent",
+            aerial_extent_gpkg,
+        ]
+        if parcels_gpkg in parcels_to_create:
+            cmd_step0.extend(["--output-parcels", parcels_gpkg])
+        if prediction_mask in parcels_to_create:
+            cmd_step0.extend(["--output-mask", prediction_mask])
+        if "mask_threshold_ha" in p_pre:
+            cmd_step0.extend(["--mask-threshold-ha", p_pre["mask_threshold_ha"]])
+        if "mask_buffer" in p_pre:
+            cmd_step0.extend(["--mask-buffer", p_pre["mask_buffer"]])
+        if "crs" in config["parameters"].get("assign_crs", {}):
+            cmd_step0.extend(["--crs", config["parameters"]["assign_crs"]["crs"]])
+        step = "Step 0: Pre-process Parcels and Prediction Mask"
+        run_command(cmd_step0, step)
+        for path in parcels_to_create:
+            require_output(path, step)
+    else:
+        logger.info(
+            "Parcels and prediction mask already exist, skipping pre-processing"
+        )
 
     # ==========================================
     # Stage 1: Data Preparation (Steps 1–4)
 
     # Step 1: Assign CRS and convert JPEGs to GeoTIFFs
     assign_crs_params = config["parameters"].get("assign_crs", {})
-    cmd_step1 = ["python", "utils/assign_crs_to_images.py", "--img-dir", raw_img_dir]
+    cmd_step1 = [PYTHON, "utils/assign_crs_to_images.py", "--img-dir", raw_img_dir]
     if "crs" in assign_crs_params:
         cmd_step1.extend(["--crs", assign_crs_params["crs"]])
     if prediction_mask:
@@ -108,7 +307,7 @@ def main():
     run_command(cmd_step1, "Step 1: Assign CRS")
 
     # Step 2: Create GDAL VRT mosaic
-    cmd_step2 = ["python", "utils/create_vrt.py", "--img-dir", tiff_crs_dir]
+    cmd_step2 = [PYTHON, "utils/create_vrt.py", "--img-dir", tiff_crs_dir]
     run_command(cmd_step2, "Step 2: Create VRT")
 
     # Step 3: Chip image
@@ -116,7 +315,7 @@ def main():
     # manual cleanup; without it chip_image.py exits immediately if chips/ exists.
     p_chip = config["parameters"]["chip_image"]
     cmd_step3 = [
-        "python",
+        PYTHON,
         "utils/chip_image.py",
         "--vrt",
         vrt_path,
@@ -134,7 +333,7 @@ def main():
 
     # Step 4: Create binary mask TIFFs from land parcel polygons
     cmd_step4 = [
-        "python",
+        PYTHON,
         "unet/create_masks.py",
         "--chip-dir",
         chips_dir,
@@ -153,7 +352,7 @@ def main():
     # with the updated chips_ignore.csv to produce the clean training dataset.
 
     cmd_step5_prelim = [
-        "python",
+        PYTHON,
         "unet/split_dataset_train_test.py",
         "--chip-dir",
         chips_dir,
@@ -169,7 +368,7 @@ def main():
 
     # Step 7 (Initial): Predict with the pre-trained base model.
     cmd_step7_init = [
-        "python",
+        PYTHON,
         "unet/predict.py",
         "--chip-dir",
         chips_dir,
@@ -177,59 +376,58 @@ def main():
         base_model_path,
         "--num-workers",
         8,
+        "--output-dir",
+        run_dir,
+        "--output-gpkg",
+        base_pred_gpkg,
     ]
     if prediction_mask:
         cmd_step7_init.extend(["--prediction-mask", prediction_mask])
+    run_command(cmd_step7_init, "Step 7 (Initial): Predict with Base Model")
+    require_output(base_pred_gpkg, "Step 7 (Initial): Predict with Base Model")
+
+    # Step 8: Line Evaluate at the filter buffer, for chip filtering
+    step = f"Step 8: Line Evaluate ({filter_buffer} m, for chip filtering)"
     run_command(
-        cmd_step7_init,
-        "Step 7 (Initial): Predict with Base Model",
-        stdin_input="o\n",
+        evaluate_command(
+            base_pred_gpkg,
+            parcels_gpkg,
+            chips_dir,
+            filter_buffer,
+            filter_eval_gpkg,
+            filter_metrics_json,
+            prediction_mask,
+        ),
+        step,
     )
+    require_output(filter_eval_gpkg, step)
 
-    # Locate the prediction GPKG just written by predict.py (newest by time)
-    pred_files = sorted(predictions_dir.glob("*.gpkg"), key=lambda f: f.stat().st_ctime)
-    if not pred_files:
-        logger.error(f"No prediction GPKG found in {predictions_dir}")
-        sys.exit(1)
-    latest_pred_gpkg = pred_files[-1]
-    logger.info(f"Using prediction file for evaluation: {latest_pred_gpkg}")
-
-    # Step 8: Line Evaluate — produces <pred_stem>_result_compare.gpkg
-    p_line_eval = config["parameters"].get("line_evaluate", {})
-    cmd_step8 = [
-        "python",
-        "unet/line_evaluate.py",
-        "--pred-gpkg",
-        latest_pred_gpkg,
-        "--parcels",
-        parcels_gpkg,
-        "--chip-dir",
-        chips_dir,
-    ]
-    if "buffer_dist" in p_line_eval:
-        cmd_step8.extend(["--buffer-dist", p_line_eval["buffer_dist"]])
-    if prediction_mask:
-        cmd_step8.extend(["--prediction-mask", prediction_mask])
-    run_command(cmd_step8, "Step 8: Line Evaluate")
-
-    # line_evaluate.py always writes its output as <pred_stem>_result_compare.gpkg
-    # in the same directory as the input prediction GPKG.
-    eval_lines_gpkg = (
-        latest_pred_gpkg.parent / f"{latest_pred_gpkg.stem}_result_compare.gpkg"
+    # Step 8b: the base model has never seen this area, so this is its
+    # out-of-sample score at the business-rule buffer
+    step = f"Step 8b: Line Evaluate ({report_buffer} m, base model, out-of-sample)"
+    run_command(
+        evaluate_command(
+            base_pred_gpkg,
+            parcels_gpkg,
+            chips_dir,
+            report_buffer,
+            base_eval_gpkg,
+            base_metrics_json,
+            prediction_mask,
+        ),
+        step,
     )
-    if not eval_lines_gpkg.exists():
-        logger.error(f"Expected line evaluate output not found: {eval_lines_gpkg}")
-        sys.exit(1)
+    require_output(base_metrics_json, step)
 
     # Step 9: Chip Metrics
     # --line-comparison: the TP/FP/FN comparison GPKG from line_evaluate
     # --mask-dir: directory containing background_only_check.csv
     # --output-gpkg: explicit path so Step 10 can locate it reliably
     cmd_step9 = [
-        "python",
+        PYTHON,
         "unet/chip_metrics.py",
         "--line-comparison",
-        eval_lines_gpkg,
+        filter_eval_gpkg,
         "--chips-index",
         chips_index_gpkg,
         "--mask-dir",
@@ -244,7 +442,7 @@ def main():
     # Step 10: Filter Training Chips — updates chips_ignore.csv
     p_filter = config["parameters"]["filter_chips"]
     cmd_step10 = [
-        "python",
+        PYTHON,
         "unet/filter_training_chips.py",
         "--input-gpkg",
         chips_metrics_gpkg,
@@ -257,19 +455,42 @@ def main():
         "--min-precision",
         p_filter["min_precision"],
     ]
+    # optional random cap on the chips that pass the filter, for large areas
+    max_dataset_chips = p_filter.get("max_dataset_chips")
+    sample_seed = p_filter.get("sample_seed", 42)
+    if max_dataset_chips:
+        cmd_step10.extend(
+            [
+                "--max-dataset-chips",
+                max_dataset_chips,
+                "--mask-dir",
+                masks_dir,
+                "--seed",
+                sample_seed,
+            ]
+        )
     run_command(cmd_step10, "Step 10: Filter Training Chips")
+
+    # keep the ignore list and chip metrics with the run: together with the
+    # config they define this area's training set, and cleanup deletes chips/
+    ignore_csv = chips_dir / "chips_ignore.csv"
+    require_output(ignore_csv, "Step 10: Filter Training Chips")
+    shutil.copy(ignore_csv, run_dir / "chips_ignore.csv")
+    shutil.copy(chips_metrics_gpkg, run_dir / "chips_index_metrics.gpkg")
+    # the chip footprints let compare_runs.py measure seams after cleanup
+    shutil.copy(chips_index_gpkg, run_dir / "chips_index.gpkg")
 
     # ==========================================
     # Stage 4: Fine Prediction
 
     # Remove the preliminary dataset split so the final split can recreate it
     if dataset_dir.exists():
-        shutil.rmtree(dataset_dir)
+        remove_tree(dataset_dir)
 
     # Step 5 (Final): Re-run dataset split now that chips_ignore.csv has been
     # updated by Step 10 — this produces the clean training dataset.
     cmd_step5_final = [
-        "python",
+        PYTHON,
         "unet/split_dataset_train_test.py",
         "--chip-dir",
         chips_dir,
@@ -279,13 +500,17 @@ def main():
         dataset_output_dir,
     ]
     run_command(cmd_step5_final, "Step 5 (Final): Create Cleaned Split Dataset")
+    dataset_counts = {
+        split: len(list((dataset_dir / "images" / split).glob("*.tif")))
+        for split in ("train", "val", "test")
+    }
 
     # Step 6: Train fine-tuned model.
     # --resume loads the base model weights as the starting point, implementing
     # the fine-tuning described in the README.
     p_train = config["parameters"]["train"]
     cmd_step6 = [
-        "python",
+        PYTHON,
         "unet/train.py",
         "--dataset-dir",
         dataset_dir,
@@ -301,52 +526,116 @@ def main():
         p_train["batch_size"],
         "--lr",
         p_train["lr"],
-        "--desc",
-        config["models"]["fine_tuned_desc"],
+        "--model-path",
+        fine_tuned_model_path,
         "--resume",
         base_model_path,
     ]
+    if "early_stop_patience" in p_train:
+        cmd_step6.extend(["--early-stop-patience", p_train["early_stop_patience"]])
     run_command(cmd_step6, "Step 6: Train Fine-Tuned Model")
-
-    # Locate the newly trained model: most-recently created .pth in models/,
-    # excluding training checkpoints.  Using ctime rather than name sort avoids
-    # the risk of the base model sorting alphabetically after the fine-tuned one.
-    models_dir = Path("models")
-    fine_tuned_candidates = sorted(
-        [f for f in models_dir.glob("*.pth") if "_checkpoint.pth" not in f.name],
-        key=lambda f: f.stat().st_ctime,
-    )
-    if not fine_tuned_candidates:
-        logger.error("No fine-tuned model .pth found in models/ after training.")
-        sys.exit(1)
-    fine_tuned_model_path = fine_tuned_candidates[-1]
+    require_output(fine_tuned_model_path, "Step 6: Train Fine-Tuned Model")
     logger.info(f"Using fine-tuned model for final prediction: {fine_tuned_model_path}")
+    loss_plot = fine_tuned_model_path.with_name(
+        f"{fine_tuned_model_path.stem}_loss.png"
+    )
+    if loss_plot.exists():
+        shutil.copy(loss_plot, run_dir / loss_plot.name)
 
     # Step 7 (Final): Predict with the fine-tuned model.
     cmd_step7_final = [
-        "python",
+        PYTHON,
         "unet/predict.py",
         "--chip-dir",
         chips_dir,
         "--model",
         fine_tuned_model_path,
+        "--num-workers",
+        8,
+        "--output-dir",
+        run_dir,
+        "--output-gpkg",
+        final_pred_gpkg,
     ]
     if prediction_mask:
         cmd_step7_final.extend(["--prediction-mask", prediction_mask])
+    run_command(cmd_step7_final, "Step 7 (Final): Predict with Fine-Tuned Model")
+    require_output(final_pred_gpkg, "Step 7 (Final): Predict with Fine-Tuned Model")
+    logger.info(f"Final predictions: {final_pred_gpkg}")
+
+    # Step 11: the fine-tuned model was trained on these labels, so this score
+    # is in-sample; compare runs on the base model's out-of-sample score
+    step = f"Step 11: Line Evaluate ({report_buffer} m, fine-tuned model, in-sample)"
     run_command(
-        cmd_step7_final,
-        "Step 7 (Final): Predict with Fine-Tuned Model",
-        stdin_input="o\n",
+        evaluate_command(
+            final_pred_gpkg,
+            parcels_gpkg,
+            chips_dir,
+            report_buffer,
+            final_eval_gpkg,
+            final_metrics_json,
+            prediction_mask,
+        ),
+        step,
     )
+    require_output(final_metrics_json, step)
 
     # ==========================================
-    # Stage 5: Cleanup
+    # Stage 5: Run summary
+
+    summary = {
+        "run_id": run_id,
+        "area": area_name,
+        "started": started.isoformat(timespec="seconds"),
+        "finished": datetime.now().isoformat(timespec="seconds"),
+        "config": str(args.config),
+        "inputs": {
+            "parcels": file_record(parcels_gpkg),
+            "prediction_mask": (
+                file_record(prediction_mask) if prediction_mask else None
+            ),
+            "raw_image_dir": str(raw_img_dir),
+            "national_parcels_dataset": (
+                str(national_parcels) if national_parcels else None
+            ),
+            "created_by_preprocessing": [str(p) for p in parcels_to_create],
+        },
+        "models": {
+            "base": str(base_model_path),
+            "fine_tuned": str(fine_tuned_model_path),
+        },
+        "chips": {
+            "ignored_by_reason": ignore_reasons(run_dir / "chips_ignore.csv"),
+            "dataset": dataset_counts,
+            "max_dataset_chips": max_dataset_chips or None,
+            "sample_seed": sample_seed if max_dataset_chips else None,
+        },
+        "metrics": {
+            "base_out_of_sample": json.loads(base_metrics_json.read_text()),
+            "fine_tuned_in_sample": json.loads(final_metrics_json.read_text()),
+            "base_at_filter_buffer": json.loads(filter_metrics_json.read_text()),
+        },
+    }
+    summary_path = run_dir / "summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2))
+    base_m = summary["metrics"]["base_out_of_sample"]
+    fine_m = summary["metrics"]["fine_tuned_in_sample"]
+    logger.info(
+        f"At {report_buffer} m: base (out-of-sample) P {base_m['precision']:.3f} "
+        f"R {base_m['recall']:.3f} F1 {base_m['f1']:.3f}; fine-tuned (in-sample) "
+        f"P {fine_m['precision']:.3f} R {fine_m['recall']:.3f} F1 {fine_m['f1']:.3f}"
+    )
+    logger.info(f"Run summary: {summary_path}")
+
+    # ==========================================
+    # Stage 6: Cleanup
 
     if not config["pipeline_settings"].get("preserve_intermediate_files", True):
         logger.info("Cleaning up intermediate files...")
 
         # Remove the GeoTIFFs, VRT, chips, and masks tree, plus the dataset split.
-        # The original JPEG source files under raw_img_dir are intentionally kept.
+        # The original JPEG source files under raw_img_dir are intentionally kept,
+        # and the run folder keeps what is needed to rebuild the training set.
         paths_to_remove = [
             tiff_crs_dir,  # contains tiffs, VRT, chips/, and masks/
             dataset_dir,  # contains the train/val/test split
@@ -355,11 +644,9 @@ def main():
         for p in paths_to_remove:
             if p.exists() and p.is_dir():
                 logger.info(f"Removing directory: {p}")
-                shutil.rmtree(p)
+                remove_tree(p)
 
-        logger.info(
-            "Cleanup complete. Final predictions remain in outputs/predictions/"
-        )
+        logger.info(f"Cleanup complete. Run outputs remain in {run_dir}")
     else:
         logger.info("Intermediate files preserved.")
 

@@ -4,8 +4,9 @@ import argparse
 import logging
 import random
 from pathlib import Path
-import rasterio
+
 import numpy as np
+import rasterio
 from tqdm import tqdm
 
 logging.basicConfig(

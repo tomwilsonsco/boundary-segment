@@ -1,21 +1,22 @@
 """Generate 6-panel analysis plots comparing chips, masks, predictions, and ground truth boundaries."""
 
-import os
-import shutil
-import sys
-import random
-import subprocess
 import argparse
-import numpy as np
-import rasterio
+import logging
+import os
+import random
+import shutil
+import subprocess
+import sys
+from contextlib import contextmanager
+from pathlib import Path
+
 import geopandas as gpd
 import matplotlib.pyplot as plt
+import numpy as np
+import rasterio
 from matplotlib.patches import Patch
 from shapely.geometry import box
 from tqdm import tqdm
-from pathlib import Path
-from contextlib import contextmanager
-import logging
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -119,6 +120,9 @@ def run_unet_predict(input_dir, output_dir, model_path=None):
         "--output-dir",
         str(output_dir),
         "--keep-preds",
+        # full per-chip predictions, so each one lines up with its chip and mask
+        "--overlap-mode",
+        "none",
     ]
 
     if model_path:

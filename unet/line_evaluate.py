@@ -1,16 +1,18 @@
 """Compare predicted boundary line geometries against ground truth parcel lines, labelling TP, FP, and FN segments."""
 
 import argparse
+import json
+import logging
 from datetime import datetime
 from pathlib import Path
+
 import geopandas as gpd
-import pandas as pd
 import rasterio as rio
+import shapely
 from shapely.geometry import GeometryCollection, box
-from shapely.ops import unary_union, substring, linemerge
+from shapely.ops import linemerge, unary_union
 from shapely.strtree import STRtree
 from tqdm import tqdm
-import logging
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -148,6 +150,20 @@ def parse_arguments(args=None):
         help="Path to the prediction mask file (.gpkg or .shp). Ground truth parcel lines are "
         "clipped to the mask before evaluation.",
     )
+    parser.add_argument(
+        "--output-gpkg",
+        type=Path,
+        default=None,
+        help="Path for the TP/FP/FN lines GPKG. The results log is appended next to it. "
+        "Default: <pred-gpkg stem>_result_compare.gpkg next to the prediction. Set it "
+        "to evaluate one prediction at more than one buffer distance.",
+    )
+    parser.add_argument(
+        "--metrics-json",
+        type=Path,
+        default=None,
+        help="Optional path to also write the lengths and metrics as JSON.",
+    )
 
     return parser.parse_args(args)
 
@@ -169,7 +185,11 @@ def main(args):
     logging.info(f"Filtering parcels by area <= {args.max_parcel_area}...")
     parcels_gdf = parcels_gdf[parcels_gdf.geometry.area <= args.max_parcel_area]
 
-    # Clip parcels to prediction mask (if provided)
+    # Clip parcels to prediction mask (if provided). The clipped parcels only limit
+    # the prediction lines: the ground truth lines are clipped as lines below, as
+    # clipping a polygon would add its cut along the mask edge as a boundary
+    mask_union = None
+    clip_parcels_gdf = parcels_gdf
     if args.prediction_mask is not None:
         if crs is None:
             raise ValueError(
@@ -183,17 +203,18 @@ def main(args):
             raise ValueError(f"Prediction mask contains no features: {mask_path}")
         mask_gdf = mask_gdf.to_crs(crs)
         mask_union = mask_gdf.union_all()
-        parcels_gdf = gpd.clip(parcels_gdf, mask_union)
+        clip_parcels_gdf = gpd.clip(parcels_gdf, mask_union)
+        parcels_gdf = parcels_gdf[parcels_gdf.intersects(mask_union)]
         logging.info(
             f"Clipped parcels to prediction mask: {len(parcels_gdf)} parcels remaining."
         )
 
     logging.info("Clipping prediction lines by area filtered parcels...")
-    if parcels_gdf.empty:
+    if clip_parcels_gdf.empty:
         pred_gdf = pred_gdf.iloc[0:0].copy()
     else:
         # buffer parcels by 10 specifically for the clipping process
-        clip_parcel_list = list(parcels_gdf.geometry.buffer(10))
+        clip_parcel_list = list(clip_parcels_gdf.geometry.buffer(10))
         tree = STRtree(clip_parcel_list)
 
         clipped_geoms = []
@@ -256,12 +277,31 @@ def main(args):
     logging.info("Selecting parcels intersecting chips index...")
     intersecting_parcels = parcels_gdf[parcels_gdf.intersects(index_union)]
 
-    logging.info("Converting intersecting parcels to boundary lines...")
-    parcel_lines = intersecting_parcels.geometry.boundary
+    logging.info("Converting intersecting parcels to dissolved boundary lines...")
+    # dissolve so edges shared by neighbouring parcels are only counted once,
+    # then explode so each line is split against nearby buffers only
+    dissolved_lines = shapely.line_merge(
+        intersecting_parcels.geometry.boundary.union_all()
+    )
+    parcel_lines = (
+        gpd.GeoSeries([dissolved_lines], crs=crs)
+        .explode(index_parts=False)
+        .reset_index(drop=True)
+    )
+    parcel_lines = parcel_lines[
+        ~parcel_lines.is_empty & parcel_lines.geom_type.isin(["LineString"])
+    ]
 
     logging.info("Clipping boundary lines by chips index...")
     parcel_lines_gdf = gpd.GeoDataFrame(geometry=parcel_lines, crs=crs)
     parcel_lines_gdf = gpd.clip(parcel_lines_gdf, index_union)
+    if mask_union is not None:
+        logging.info("Clipping boundary lines by prediction mask...")
+        parcel_lines_gdf = gpd.clip(parcel_lines_gdf, mask_union)
+        parcel_lines_gdf = parcel_lines_gdf.explode(index_parts=False)
+        parcel_lines_gdf = parcel_lines_gdf[
+            parcel_lines_gdf.geom_type == "LineString"
+        ].reset_index(drop=True)
 
     logging.info(
         "Removing parcel lines near the external boundary of the study area..."
@@ -280,7 +320,7 @@ def main(args):
     pred_gdf = gpd.clip(pred_gdf, index_union)
 
     logging.info("Buffering parcel lines...")
-    parcel_buffers = parcel_lines.buffer(args.buffer_dist, resolution=4)
+    parcel_buffers = parcel_lines.buffer(args.buffer_dist, quad_segs=4)
 
     logging.info("Splitting prediction lines (True Positives / False Positives)...")
     tp_geoms, fp_geoms = split_by_local_union(pred_gdf.geometry, parcel_buffers, crs)
@@ -294,7 +334,7 @@ def main(args):
     simplified_pred_lines = exploded_preds.geometry.simplify(1.0)
 
     logging.info(f"Buffering prediction lines by {args.buffer_dist}...")
-    pred_buffers = simplified_pred_lines.buffer(args.buffer_dist, resolution=4)
+    pred_buffers = simplified_pred_lines.buffer(args.buffer_dist, quad_segs=4)
     logging.info("Evaluating ground truth lines for False Negatives (FN)...")
     _, fn_geoms = split_by_local_union(parcel_lines, pred_buffers, crs)
     fn_gdf = merge_lines(filter_lines(fn_geoms, crs, "FN"))
@@ -336,17 +376,36 @@ def main(args):
 
     logging.info("\n" + "\n".join(results_text))
 
-    log_file = args.pred_gpkg.parent / "line_evaluate_results.log"
+    output_gpkg = args.output_gpkg or (
+        args.pred_gpkg.parent / f"{args.pred_gpkg.stem}_result_compare.gpkg"
+    )
+    output_gpkg.parent.mkdir(parents=True, exist_ok=True)
+
+    log_file = output_gpkg.parent / "line_evaluate_results.log"
     with open(log_file, "a") as f:
         f.write("\n".join(results_text) + "\n")
 
     logging.info(f"Results appended to {log_file}")
 
+    if args.metrics_json is not None:
+        metrics = {
+            "prediction": str(args.pred_gpkg),
+            "parcels": str(args.parcels),
+            "buffer_dist": args.buffer_dist,
+            "tp_m": float(tp_len),
+            "fp_m": float(fp_len),
+            "fn_m": float(fn_len),
+            "precision": precision,
+            "recall": recall,
+            "f1": f1_score,
+        }
+        args.metrics_json.parent.mkdir(parents=True, exist_ok=True)
+        args.metrics_json.write_text(json.dumps(metrics, indent=2))
+        logging.info(f"Metrics written to {args.metrics_json}")
+
     # Write output in chunks, one component at a time, to avoid OOM from a
     # single large concat + to_file call.
-    output_gpkg = args.pred_gpkg.parent / f"{args.pred_gpkg.stem}_result_compare.gpkg"
     logging.info(f"Saving evaluated lines to {output_gpkg}...")
-    output_gpkg.parent.mkdir(parents=True, exist_ok=True)
     if output_gpkg.exists():
         output_gpkg.unlink()
 

@@ -1,22 +1,24 @@
 """Train a segmentation model (U-Net / UNet++ / DeepLabV3+ / FPN) on chip images and binary boundary masks."""
 
+import argparse
 import logging
 import os
 import random
-import torch
-import numpy as np
-from torch.utils.data import DataLoader, Dataset
-import cv2
-import segmentation_models_pytorch as smp
-import albumentations as albu
-from albumentations.pytorch import ToTensorV2
-from tqdm import tqdm
-import matplotlib.pyplot as plt
-from datetime import datetime
-from torch.amp import autocast, GradScaler
 from contextlib import contextmanager
-import argparse
+from datetime import datetime
 from pathlib import Path
+
+import albumentations as albu
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+import segmentation_models_pytorch as smp
+import torch
+from albumentations.pytorch import ToTensorV2
+from matplotlib.ticker import MaxNLocator
+from torch.amp import GradScaler, autocast
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -231,6 +233,14 @@ def parse_arguments(args=None):
         help="Directory to save trained model files and the training loss plot. Default: models.",
     )
     parser.add_argument(
+        "--model-path",
+        type=Path,
+        default=None,
+        help="Exact path for the saved model .pth. The checkpoint and loss plot are "
+        "written next to it. Overrides --output-dir and --desc naming. Use this when "
+        "another step needs to know the model path in advance.",
+    )
+    parser.add_argument(
         "--resume",
         type=Path,
         default=None,
@@ -259,6 +269,14 @@ def parse_arguments(args=None):
     )
 
     return parser.parse_args(args)
+
+
+def strip_compile_prefix(state_dict):
+    """Remove the '_orig_mod.' key prefix that torch.compile adds to saved weights."""
+    return {
+        (k[len("_orig_mod.") :] if k.startswith("_orig_mod.") else k): v
+        for k, v in state_dict.items()
+    }
 
 
 def _seed_worker(worker_id):
@@ -303,9 +321,15 @@ def main(args):
     else:
         base_name = f"{timestamp}_{arch_name}"
 
-    model_save_path = args.output_dir / f"{base_name}.pth"
-    checkpoint_path = args.output_dir / f"{base_name}_checkpoint.pth"
-    loss_plot_path = args.output_dir / f"{base_name}_loss.png"
+    if args.model_path is not None:
+        args.model_path.parent.mkdir(parents=True, exist_ok=True)
+        model_save_path = args.model_path
+        out_dir, base_name = args.model_path.parent, args.model_path.stem
+    else:
+        model_save_path = args.output_dir / f"{base_name}.pth"
+        out_dir = args.output_dir
+    checkpoint_path = out_dir / f"{base_name}_checkpoint.pth"
+    loss_plot_path = out_dir / f"{base_name}_loss.png"
 
     logging.info(f"Experiment: {args.desc if args.desc else 'N/A'}")
     logging.info(f"Model architecture: {args.arch}")
@@ -339,6 +363,11 @@ def main(args):
 
     logging.info(f"Using {num_workers} workers for data loading.")
 
+    # PyTorch rejects these options when loading in the main process (0 workers)
+    worker_options = (
+        {"persistent_workers": True, "prefetch_factor": 4} if num_workers > 0 else {}
+    )
+
     generator = torch.Generator()
     if args.seed is not None:
         generator.manual_seed(args.seed)
@@ -349,10 +378,9 @@ def main(args):
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
-        persistent_workers=True,
-        prefetch_factor=4,
         worker_init_fn=_seed_worker if args.seed is not None else None,
         generator=generator if args.seed is not None else None,
+        **worker_options,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -360,9 +388,8 @@ def main(args):
         shuffle=False,
         num_workers=num_workers,
         pin_memory=True,
-        persistent_workers=True,
-        prefetch_factor=4,
         worker_init_fn=_seed_worker if args.seed is not None else None,
+        **worker_options,
     )
 
     logging.info(
@@ -440,22 +467,39 @@ def main(args):
     epochs_no_improve = 0
     train_losses = []
     val_losses = []
+    model_saved = False
+    # when fine-tuning from a model's weights, its validation loss before any
+    # training, which the fine-tuned epochs then have to beat
+    start_val_loss = None
+    score_start = False
 
-    # Check if we should resume from existing checkpoint
-    if args.resume and args.resume.exists():
+    # Resume from an existing checkpoint or model. An explicit --resume that
+    # cannot be loaded is an error: falling back to ImageNet weights would
+    # silently train a different model.
+    if args.resume:
+        if not args.resume.exists():
+            raise FileNotFoundError(
+                f"Checkpoint to resume from not found: {args.resume}"
+            )
         logging.info(f"\nResuming from checkpoint: {args.resume}")
+        # load into the uncompiled module, so a file saved with or without
+        # torch.compile loads whether or not this run compiles
+        target_model = getattr(model, "_orig_mod", model)
         try:
             checkpoint = torch.load(args.resume, map_location=DEVICE)
 
             # Check if it's a full checkpoint or just weights
             if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
-                model.load_state_dict(checkpoint["model_state_dict"])
+                target_model.load_state_dict(
+                    strip_compile_prefix(checkpoint["model_state_dict"])
+                )
                 optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
                 start_epoch = checkpoint["epoch"] + 1
                 best_val_loss = checkpoint["best_val_loss"]
                 epochs_no_improve = checkpoint["epochs_no_improve"]
                 train_losses = checkpoint["train_losses"]
                 val_losses = checkpoint["val_losses"]
+                start_val_loss = checkpoint.get("start_val_loss")
                 logging.info(
                     f"Successfully loaded checkpoint from epoch {checkpoint['epoch']}"
                 )
@@ -464,23 +508,28 @@ def main(args):
                 )
                 logging.info(f"Will save to new checkpoint: {checkpoint_path}\n")
             elif isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-                model.load_state_dict(checkpoint["state_dict"])
+                target_model.load_state_dict(
+                    strip_compile_prefix(checkpoint["state_dict"])
+                )
                 logging.info("Loaded model weights only (from inference model file).")
                 logging.info(
                     "Optimizer, learning rate, and epochs will start from scratch.\n"
                 )
+                score_start = True
             else:
-                model.load_state_dict(checkpoint)
+                target_model.load_state_dict(strip_compile_prefix(checkpoint))
                 logging.info(
                     "Loaded model weights only (old format - no optimizer state)"
                 )
                 logging.warning("Optimizer will restart from scratch\n")
+                score_start = True
         except Exception as e:
-            logging.warning(f"Could not load checkpoint: {e}")
-            logging.info("Starting training from scratch with pretrained encoder...\n")
-    elif args.resume:
-        logging.warning(f"\nCheckpoint specified but not found: {args.resume}")
-        logging.info("Starting training from scratch with pretrained encoder...\n")
+            raise RuntimeError(f"Could not load checkpoint {args.resume}: {e}") from e
+        if start_epoch >= args.epochs:
+            raise ValueError(
+                f"Checkpoint {args.resume} is already at epoch {start_epoch}, "
+                f"so --epochs {args.epochs} leaves nothing to train."
+            )
     else:
         logging.info("\nStarting training from scratch with pretrained encoder...\n")
 
@@ -504,6 +553,50 @@ def main(args):
             f"Gradient accumulation enabled: {args.accum_steps} steps (effective batch size: {args.batch_size * args.accum_steps})"
         )
 
+    def compute_loss(logits, masks):
+        if args.loss_method == "bce_only":
+            return bce_only_loss(logits, masks)
+        return dice_loss(logits, masks) + secondary_loss(logits, masks)
+
+    def validate(desc):
+        """Mean validation loss of the model in its current state."""
+        model.eval()
+        val_loss = 0
+        val_loop = tqdm(val_loader, desc=desc)
+        with torch.no_grad():
+            for images, masks in val_loop:
+                images = images.to(DEVICE, non_blocking=True)
+                masks = masks.to(DEVICE, non_blocking=True)
+
+                # mixed precision validation
+                with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
+                    loss = compute_loss(model(images), masks)
+
+                val_loss += loss.item()
+                val_loop.set_postfix(loss=loss.item())
+        return val_loss / len(val_loader)
+
+    def save_model():
+        """Save the model weights and config for inference."""
+        inference_config = {
+            "state_dict": model.state_dict(),
+            "arch": args.arch,
+            "encoder": args.encoder,
+        }
+        torch.save(inference_config, model_save_path)
+
+    # When fine-tuning, score the starting weights first, so the first epoch has
+    # to improve on them and a model worse than the start is never saved. The
+    # starting weights are saved too, as the result if no epoch improves.
+    if score_start:
+        start_val_loss = validate("Starting model [Val]")
+        logging.info(f"Starting model validation loss: {start_val_loss:.4f}")
+        best_val_loss = start_val_loss
+        # the LR scheduler compares later epochs with the same starting point
+        scheduler.step(start_val_loss)
+        save_model()
+        model_saved = True
+
     logging.info(f"Early stopping patience: {args.early_stop_patience} epochs")
     for epoch in range(start_epoch, args.epochs):
 
@@ -519,11 +612,7 @@ def main(args):
             masks = masks.to(DEVICE, non_blocking=True)
 
             with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
-                logits = model(images)
-                if args.loss_method == "bce_only":
-                    loss = bce_only_loss(logits, masks)
-                else:
-                    loss = dice_loss(logits, masks) + secondary_loss(logits, masks)
+                loss = compute_loss(model(images), masks)
                 loss = loss / args.accum_steps
 
             scaler.scale(loss).backward()
@@ -540,27 +629,7 @@ def main(args):
 
         avg_train_loss = train_loss / len(train_loader)
 
-        model.eval()
-        val_loss = 0
-
-        val_loop = tqdm(val_loader, desc=f"Epoch {epoch+1}/{args.epochs} [Val]")
-        with torch.no_grad():
-            for images, masks in val_loop:
-                images = images.to(DEVICE, non_blocking=True)
-                masks = masks.to(DEVICE, non_blocking=True)
-
-                # mixed precision validation
-                with autocast(DEVICE, dtype=amp_dtype, enabled=use_amp):
-                    logits = model(images)
-                    if args.loss_method == "bce_only":
-                        loss = bce_only_loss(logits, masks)
-                    else:
-                        loss = dice_loss(logits, masks) + secondary_loss(logits, masks)
-
-                val_loss += loss.item()
-                val_loop.set_postfix(loss=loss.item())
-
-        avg_val_loss = val_loss / len(val_loader)
+        avg_val_loss = validate(f"Epoch {epoch+1}/{args.epochs} [Val]")
 
         train_losses.append(avg_train_loss)
         val_losses.append(avg_val_loss)
@@ -589,19 +658,15 @@ def main(args):
                 "epochs_no_improve": epochs_no_improve,
                 "train_losses": train_losses,
                 "val_losses": val_losses,
+                "start_val_loss": start_val_loss,
                 "arch": args.arch,
                 "encoder": args.encoder,
                 "loss_method": args.loss_method,
                 "batch_size": args.batch_size,
             }
             torch.save(checkpoint, checkpoint_path)
-            # save model weights and config for inference
-            inference_config = {
-                "state_dict": model.state_dict(),
-                "arch": args.arch,
-                "encoder": args.encoder,
-            }
-            torch.save(inference_config, model_save_path)
+            save_model()
+            model_saved = True
         else:
             epochs_no_improve += 1
             logging.info(f"No improvement for {epochs_no_improve} epoch(s)")
@@ -614,13 +679,34 @@ def main(args):
         logging.info("-" * 30)
 
     logging.info(f"Training Complete. Best Validation Loss: {best_val_loss:.4f}")
+    if start_val_loss is not None and best_val_loss >= start_val_loss:
+        logging.warning(
+            "No epoch improved on the starting model's validation loss "
+            f"({start_val_loss:.4f}); the saved model is the starting model."
+        )
+    if not model_saved:
+        raise RuntimeError(
+            f"No model was saved to {model_save_path}: validation loss never "
+            f"improved on {best_val_loss:.4f} (resumed best, or NaN losses)."
+        )
 
     # plot / save training curves
     logging.info(f"Saving training loss plot to {loss_plot_path}...")
     plt.figure(figsize=(10, 6))
-    epochs_range = range(1, len(train_losses) + 1)
+    epochs_range = list(range(1, len(train_losses) + 1))
     plt.plot(epochs_range, train_losses, "b-", label="Training Loss", linewidth=2)
-    plt.plot(epochs_range, val_losses, "r-", label="Validation Loss", linewidth=2)
+    if start_val_loss is not None:
+        # the starting model's score is plotted as epoch 0
+        plt.plot(
+            [0] + epochs_range,
+            [start_val_loss] + val_losses,
+            "r-",
+            label="Validation Loss",
+            linewidth=2,
+        )
+    else:
+        plt.plot(epochs_range, val_losses, "r-", label="Validation Loss", linewidth=2)
+    plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
     plt.xlabel("Epoch", fontsize=12)
     plt.ylabel("Loss", fontsize=12)
     plt.title("Training and Validation Loss", fontsize=14, fontweight="bold")

@@ -209,3 +209,6 @@ __marimo__/
 inputs/
 outputs/
 models/
+# Local notes, not for the repository
+CLAUDE.md
+docs/
