@@ -262,7 +262,6 @@ excludes the chips added to `chips_ignore.csv`. Then re-run **Step 6** to train 
 new model on the improved dataset. Testing showed this iterative refinement produced
 useful improvements in prediction quality.
 
-
 ## Additional Scripts
 
 The following scripts are part of the repository but are not part of the main pipeline above.
@@ -274,6 +273,33 @@ The following scripts are part of the repository but are not part of the main pi
 | `utils/merge_training_datasets.py` | Merges two existing train/val/test dataset directories into one, prefixing filenames to avoid collisions. Useful when combining data from multiple geographic areas. |
 | `unet/calculate_mask_proportion.py` | Samples a percentage of mask chips and reports the mean proportion of boundary pixels. Use the result to determine a sensible `--pos-weight` for `train.py`. |
 | `unet/delete_dataset_chips.py` | Deletes chips listed in `chips_ignore.csv` from an existing dataset directory. An alternative to re-running `split_dataset_train_test.py` after filtering. |
+| `unet/parcel_review.py` | Scores and ranks every parcel from the TP/FP/FN lines of `line_evaluate.py`, for review. Not run by `run_pipeline.py`; see below. |
+
+### Parcel review list
+The line evaluation gives TP/FP/FN line segments, but the GIS team reviews parcels. `parcel_review.py` scores every parcel from the Step 8 output and ranks it by how far its mapped boundaries disagree with the predicted lines. Run it on an evaluation at the report buffer. It is an exploratory tool, not part of `run_pipeline.py`.
+
+```bash
+python unet/parcel_review.py --line-comparison outputs/predictions/<run>/<prediction>_result_compare.gpkg --parcels inputs/gretna_parcels.gpkg --prediction-mask inputs/gretna_prediction_mask.gpkg --buffer-dist 8
+```
+
+`--buffer-dist` must be the buffer the line evaluation used. The output, `<prediction>_parcel_review.gpkg` (layer `parcel_review`), has every parcel with its original attributes plus:
+
+| Column | Meaning |
+|---|---|
+| `rank` | Review order, 1 first. Empty for parcels that are not scored |
+| `score` | `max(missed_frac / 0.25, interior_m / 50)`. Above 1 is flagged |
+| `flag` | `score` above 1 |
+| `main_signal` | Which signal gives the score: `missed edge` or `interior lines` |
+| `missed_edge_m`, `missed_frac` | Length and share of the parcel boundary that is FN: no predicted line within the buffer |
+| `offset_edge_m` | Part of the missed edge with a predicted line within 30 m (`--offset-dist`): a likely moved or mis-mapped boundary. Reported, not scored |
+| `interior_m` | FP line inside the parcel, more than the buffer from its boundary: a possible new boundary |
+| `edge_m`, `area_ha`, `mask_frac` | Boundary length, area, and share of the area inside the prediction mask |
+| `scope` | `in scope`, `outside mask` (under 90% inside the mask, `--min-mask-frac`) or `too large` (over 50 ha, `--max-parcel-area`) |
+| `review_status`, `review_notes` | Empty, for the reviewer to fill in, e.g. `changed`, `not changed` or `not sure` |
+
+In QGIS, sort the attribute table by `rank` and show the TP/FP/FN layer on top of the imagery to see the lines behind each score.
+
+The score is a ranking, not a probability of change: it has not been calibrated against parcels known to have changed. A review of the top-ranked parcels and a random sample of the rest, recorded in `review_status`, would give the data to calibrate it. Most flags on woodland, moorland and rough grazing are noise: boundaries that cannot be seen from the air, or tracks and rides drawn as lines. There is no land-use filter yet.
 
 # Running full pipeline
 A Python wrapper script, `run_pipeline.py`, runs the entire pipeline described above: Steps 0–10 including the iterative predict - local training filter - retrain. Configuration is read from a YAML file so you can adjust parameters without editing the script.
